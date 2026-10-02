@@ -1725,6 +1725,14 @@ async function resetAllData(){
 async function selectAuthor(name){
   currentAuthor = name;
   currentScreen = "loading";
+  // These flags only mean something while actively navigating one author's
+  // session — picking a (possibly different) author shouldn't carry over
+  // "they got here via a shortcut" from whoever was selected before, or a
+  // brand-new author's very first screen would wrongly show "Save & choose
+  // a different section"/"Save & return to To-Do list".
+  cameFromWhatsLeft = false;
+  cameFromNavSubmenu = false;
+  stepHistory = [];
   render();
   currentData = await loadAuthorData(name);
   if(!currentData.meta.welcomeSeen){
@@ -1803,6 +1811,8 @@ function renderWelcome(returning){
     go.onclick = async () => {
       currentData.meta.welcomeSeen = true;
       await saveAuthorData(currentAuthor, currentData);
+      cameFromWhatsLeft = false;
+      cameFromNavSubmenu = false;
       currentStepId = "general-info";
       currentScreen = "section";
       render();
@@ -2080,8 +2090,8 @@ function computeChecklist(){
     (d.preorderBooksList || []).forEach(b=>{
       if(!b || !b.title || !b.title.trim()) return;
       const missing = [];
-      if(!b.coverUrl) missing.push("cover");
-      if(!b.regularPrice || b.regularPrice === "") missing.push("price");
+      if(!bookHasCover(b)) missing.push("cover");
+      if(!bookHasAllPrices(b)) missing.push("price");
       if(missing.length){
         rows.push({
           label: `"${truncatePreview(b.title, 30)}" is missing a ${missing.join(" and ")}`,
@@ -3708,6 +3718,82 @@ function emptyPreorderBook(){
   };
 }
 
+/* ---- Format variants (paperback/hardcover/special edition for a single
+   book; paperback/hardcover/box set for a whole series) ----
+   Older saved books have no `formats` array at all — ensureBookFormats /
+   ensureSeriesFormats lazily migrate those into the new shape the first
+   time they're touched, folding the old flat regularPrice/soireePrice (or
+   seriesRegularPrice/seriesSoireePrice) in as the "paperback" entry so
+   nothing already saved is lost. */
+const BOOK_FORMAT_OPTIONS = [
+  {value:"paperback", label:"Paperback"},
+  {value:"hardcover", label:"Hardcover"},
+  {value:"specialEdition", label:"Special Edition"}
+];
+const SERIES_FORMAT_OPTIONS = [
+  {value:"paperback", label:"Paperback"},
+  {value:"hardcover", label:"Hardcover"},
+  {value:"boxSet", label:"Box Set"}
+];
+
+function ensureBookFormats(book){
+  if(!Array.isArray(book.formats) || book.formats.length === 0){
+    book.formats = ["paperback"];
+    book.formatPrices = book.formatPrices || {};
+    book.formatPrices.paperback = {
+      regular: book.regularPrice || "",
+      soiree: book.soireePrice || ""
+    };
+  }
+  if(!book.formatPrices) book.formatPrices = {};
+  book.formats.forEach(f=>{ if(!book.formatPrices[f]) book.formatPrices[f] = {regular:"", soiree:""}; });
+  if(!book.formatCovers) book.formatCovers = {};
+  return book;
+}
+function bookFormatList(book){
+  ensureBookFormats(book);
+  return book.formats;
+}
+function bookFormatPrice(book, fmt){
+  ensureBookFormats(book);
+  if(!book.formatPrices[fmt]) book.formatPrices[fmt] = {regular:"", soiree:""};
+  return book.formatPrices[fmt];
+}
+function primaryBookCoverUrl(book){
+  if(book.coverUrl) return book.coverUrl;
+  const formats = bookFormatList(book);
+  for(let i=0;i<formats.length;i++){
+    const fc = book.formatCovers && book.formatCovers[formats[i]];
+    if(fc && fc.coverUrl) return fc.coverUrl;
+  }
+  return "";
+}
+function bookHasCover(book){
+  ensureBookFormats(book);
+  if(bookFormatList(book).length > 1 && book.sameCoverForFormats === "No"){
+    return bookFormatList(book).every(f => book.formatCovers[f] && book.formatCovers[f].coverUrl);
+  }
+  return !!book.coverUrl;
+}
+function bookHasAllPrices(book){
+  ensureBookFormats(book);
+  return bookFormatList(book).every(f => book.formatPrices[f] && book.formatPrices[f].regular && book.formatPrices[f].regular !== "");
+}
+
+function ensureSeriesFormats(book){
+  if(!Array.isArray(book.seriesFormats) || book.seriesFormats.length === 0){
+    book.seriesFormats = ["paperback"];
+    book.seriesFormatPrices = book.seriesFormatPrices || {};
+    book.seriesFormatPrices.paperback = {
+      regular: book.seriesRegularPrice || "",
+      soiree: book.seriesSoireePrice || ""
+    };
+  }
+  if(!book.seriesFormatPrices) book.seriesFormatPrices = {};
+  book.seriesFormats.forEach(f=>{ if(!book.seriesFormatPrices[f]) book.seriesFormatPrices[f] = {regular:"", soiree:""}; });
+  return book;
+}
+
 /* ---------- SCREEN: PRESALE BOOKS FROM SELLING LIST (custom) ---------- */
 function renderPreorderFromSelling(step){
   app.appendChild(logoLockup());
@@ -3949,8 +4035,15 @@ function renderPreorderBooks(step){
       const newBook = emptyPreorderBook();
       currentData.preorderBooksList.push(newBook);
       renderEntries();
-      const titleInp = entriesWrap.querySelector(`[data-preorder-title-for="${newBook.id}"]`);
-      if(titleInp) titleInp.focus();
+      // Scroll the new book's entry (and its title field) into view — just
+      // focusing the input moves the keyboard-focus caret but leaves the
+      // page scrolled wherever the "+ Add another book" button was.
+      requestAnimationFrame(()=>{
+        const entryEl = entriesWrap.querySelector(`[data-book-entry-id="${newBook.id}"]`);
+        if(entryEl) entryEl.scrollIntoView({block: "start", behavior: "smooth"});
+        const titleInp = entriesWrap.querySelector(`[data-preorder-title-for="${newBook.id}"]`);
+        if(titleInp) titleInp.focus({preventScroll:true});
+      });
     };
     entriesWrap.appendChild(addBtn);
 
@@ -4155,16 +4248,29 @@ function buildPreorderBookEntryCollapsed(book, index, onChange){
   titleSpan.textContent = (book.title && book.title.trim()) ? book.title : "(untitled book)";
   row1.appendChild(titleSpan);
 
-  row1.appendChild(preorderLabeledIcon("Cover", !!book.coverUrl));
+  if(book.isNewTag === "Yes"){
+    const newPill = document.createElement('span');
+    newPill.textContent = "New!";
+    newPill.style.cssText = "flex-shrink:0;font-family:'Montserrat',sans-serif;font-weight:700;font-size:10.5px;"
+      + "letter-spacing:.03em;color:#fff;background:var(--terracotta,#E4593F);padding:2px 8px;border-radius:999px;";
+    row1.appendChild(newPill);
+  }
+
+  row1.appendChild(preorderLabeledIcon("Cover", bookHasCover(book)));
 
   const priceGroup = document.createElement('div');
-  priceGroup.style.cssText = "display:flex;align-items:center;gap:8px;";
+  priceGroup.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
   const priceLabel = document.createElement('span');
   priceLabel.textContent = "Price:";
   priceLabel.style.cssText = "font-weight:700;font-size:14px;";
   priceGroup.appendChild(priceLabel);
-  priceGroup.appendChild(preorderPriceDisplay("Reg.:", book.regularPrice, false));
-  priceGroup.appendChild(preorderPriceDisplay("Soirée:", book.soireePrice, "muted"));
+  const formatAbbrev = {paperback:"PB", hardcover:"HC", specialEdition:"SE"};
+  bookFormatList(book).forEach(f=>{
+    const fp = bookFormatPrice(book, f);
+    const abbr = bookFormatList(book).length > 1 ? (formatAbbrev[f] || f) + " " : "";
+    priceGroup.appendChild(preorderPriceDisplay(abbr+"Reg.:", fp.regular, false));
+    priceGroup.appendChild(preorderPriceDisplay(abbr+"Soirée:", fp.soiree, "muted"));
+  });
   row1.appendChild(priceGroup);
 
   row1.appendChild(preorderLabeledIcon("Blurb", !!(book.blurb && book.blurb.trim())));
@@ -4193,13 +4299,19 @@ function buildPreorderBookEntryCollapsed(book, index, onChange){
     row2.appendChild(bookOf);
 
     const seriesPriceGroup = document.createElement('div');
-    seriesPriceGroup.style.cssText = "display:flex;align-items:center;gap:8px;";
+    seriesPriceGroup.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
     const seriesPriceLabel = document.createElement('span');
     seriesPriceLabel.textContent = "Price:";
     seriesPriceLabel.style.cssText = "font-weight:700;font-size:14px;";
     seriesPriceGroup.appendChild(seriesPriceLabel);
-    seriesPriceGroup.appendChild(preorderPriceDisplay("Reg.:", book.seriesRegularPrice, "muted"));
-    seriesPriceGroup.appendChild(preorderPriceDisplay("Soirée:", book.seriesSoireePrice, "muted"));
+    const seriesFormatAbbrev = {paperback:"PB", hardcover:"HC", boxSet:"Box"};
+    ensureSeriesFormats(book);
+    book.seriesFormats.forEach(f=>{
+      const fp = book.seriesFormatPrices[f] || {};
+      const abbr = book.seriesFormats.length > 1 ? (seriesFormatAbbrev[f] || f) + " " : "";
+      seriesPriceGroup.appendChild(preorderPriceDisplay(abbr+"Reg.:", fp.regular, "muted"));
+      seriesPriceGroup.appendChild(preorderPriceDisplay(abbr+"Soirée:", fp.soiree, "muted"));
+    });
     row2.appendChild(seriesPriceGroup);
 
     wrap.appendChild(row2);
@@ -4223,7 +4335,12 @@ function getExistingSeriesNames(currentBook){
 function getSeriesInfo(name, currentBook){
   const match = (currentData.preorderBooksList || []).find(b => b !== currentBook && b.seriesName === name);
   if(!match) return null;
-  return { totalBooks: match.seriesTotalBooks, regularPrice: match.seriesRegularPrice, soireePrice: match.seriesSoireePrice };
+  ensureSeriesFormats(match);
+  return {
+    totalBooks: match.seriesTotalBooks, regularPrice: match.seriesRegularPrice, soireePrice: match.seriesSoireePrice,
+    seriesFormats: match.seriesFormats, seriesFormatPrices: match.seriesFormatPrices,
+    seriesHasCover: match.seriesHasCover, seriesCoverUrl: match.seriesCoverUrl, seriesCoverUploadedAt: match.seriesCoverUploadedAt
+  };
 }
 
 function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
@@ -4253,39 +4370,162 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   titleField.appendChild(titleInp);
   wrap.appendChild(titleField);
 
-  const coverField = document.createElement('div');
-  coverField.className = "field";
-  coverField.innerHTML = `<label>Cover image</label>`;
-  coverField.appendChild(buildBookCoverUpload(book));
-  wrap.appendChild(coverField);
+  // ---- "New!" tag (no dates to track — just a flag authors flip on a
+  // freshly-released book, shown as a little burst on the storefront). ----
+  const newTagField = document.createElement('div');
+  newTagField.className = "field";
+  newTagField.innerHTML = `<label>Do you want to add a "New!" tag to this book?</label><div class="help">Shows a little "New!" badge on the storefront to help attendees spot it.</div>`;
+  const newTagRow = document.createElement('div');
+  newTagRow.className = "btn-row";
+  newTagRow.style.marginTop = "4px";
+  const newTagYesBtn = document.createElement('button');
+  newTagYesBtn.type = "button";
+  newTagYesBtn.textContent = "Yes";
+  const newTagNoBtn = document.createElement('button');
+  newTagNoBtn.type = "button";
+  newTagNoBtn.textContent = "No";
+  function styleNewTagToggle(){
+    newTagYesBtn.className = "btn btn-compact " + (book.isNewTag === "Yes" ? "btn-primary" : "btn-secondary");
+    newTagNoBtn.className = "btn btn-compact " + (book.isNewTag === "No" ? "btn-primary" : "btn-secondary");
+  }
+  newTagYesBtn.onclick = () => { book.isNewTag = "Yes"; styleNewTagToggle(); };
+  newTagNoBtn.onclick = () => { book.isNewTag = "No"; styleNewTagToggle(); };
+  styleNewTagToggle();
+  newTagRow.appendChild(newTagYesBtn);
+  newTagRow.appendChild(newTagNoBtn);
+  newTagField.appendChild(newTagRow);
+  wrap.appendChild(newTagField);
 
-  const regField = document.createElement('div');
-  regField.className = "field";
-  regField.innerHTML = `<label>Regular price <span class="req">*</span></label>`;
-  const regInp = document.createElement('input');
-  regInp.type = "number";
-  regInp.inputMode = "decimal";
-  regInp.step = "0.01";
-  regInp.min = "0";
-  regInp.placeholder = "e.g. 18.99";
-  regInp.value = book.regularPrice || "";
-  regInp.addEventListener('input', ()=>{ book.regularPrice = regInp.value; });
-  regField.appendChild(regInp);
-  wrap.appendChild(regField);
+  // ---- Formats this book comes in ----
+  ensureBookFormats(book);
+  const formatsField = document.createElement('div');
+  formatsField.className = "field";
+  formatsField.innerHTML = `<label>Select all formats this book comes in</label>`;
+  const formatsRow = document.createElement('div');
+  formatsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;";
+  formatsField.appendChild(formatsRow);
+  wrap.appendChild(formatsField);
 
-  const soireeField = document.createElement('div');
-  soireeField.className = "field";
-  soireeField.innerHTML = `<label>Soirée price</label><div class="help">Optional — a small discount here is a great incentive to buy! Leave blank and your regular price shows instead.</div>`;
-  const soireeInp = document.createElement('input');
-  soireeInp.type = "number";
-  soireeInp.inputMode = "decimal";
-  soireeInp.step = "0.01";
-  soireeInp.min = "0";
-  soireeInp.placeholder = "e.g. 15.99";
-  soireeInp.value = book.soireePrice || "";
-  soireeInp.addEventListener('input', ()=>{ book.soireePrice = soireeInp.value; });
-  soireeField.appendChild(soireeInp);
-  wrap.appendChild(soireeField);
+  const pricesWrap = document.createElement('div');
+  wrap.appendChild(pricesWrap);
+
+  const sameCoverField = document.createElement('div');
+  sameCoverField.className = "field";
+  wrap.appendChild(sameCoverField);
+
+  const coverWrap = document.createElement('div');
+  wrap.appendChild(coverWrap);
+
+  function renderFormatPrices(){
+    pricesWrap.innerHTML = "";
+    bookFormatList(book).forEach(f=>{
+      const opt = BOOK_FORMAT_OPTIONS.find(o=>o.value===f);
+      const fp = bookFormatPrice(book, f);
+
+      const regF = document.createElement('div');
+      regF.className = "field";
+      regF.innerHTML = `<label>${opt.label} regular price <span class="req">*</span></label>`;
+      const regI = document.createElement('input');
+      regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
+      regI.placeholder = "e.g. 18.99";
+      regI.value = fp.regular || "";
+      regI.addEventListener('input', ()=>{ fp.regular = regI.value; });
+      regF.appendChild(regI);
+      pricesWrap.appendChild(regF);
+
+      const soiF = document.createElement('div');
+      soiF.className = "field";
+      soiF.innerHTML = `<label>${opt.label} Soirée price</label><div class="help">Optional — a small discount here is a great incentive to buy! Leave blank and the regular price shows instead.</div>`;
+      const soiI = document.createElement('input');
+      soiI.type = "number"; soiI.inputMode = "decimal"; soiI.step = "0.01"; soiI.min = "0";
+      soiI.placeholder = "e.g. 15.99";
+      soiI.value = fp.soiree || "";
+      soiI.addEventListener('input', ()=>{ fp.soiree = soiI.value; });
+      soiF.appendChild(soiI);
+      pricesWrap.appendChild(soiF);
+    });
+  }
+
+  function renderSameCoverQuestion(){
+    sameCoverField.innerHTML = "";
+    if(bookFormatList(book).length < 2){ sameCoverField.style.display = "none"; return; }
+    sameCoverField.style.display = "";
+    sameCoverField.innerHTML = `<label>Are the covers of each format the same?</label><div class="help">Choose "No" if, say, the special edition has a different cover than the paperback.</div>`;
+    const row = document.createElement('div');
+    row.className = "btn-row";
+    row.style.marginTop = "4px";
+    const yesBtn = document.createElement('button');
+    yesBtn.type = "button"; yesBtn.textContent = "Yes";
+    const noBtn = document.createElement('button');
+    noBtn.type = "button"; noBtn.textContent = "No";
+    function styleBtns(){
+      yesBtn.className = "btn btn-compact " + (book.sameCoverForFormats === "Yes" ? "btn-primary" : "btn-secondary");
+      noBtn.className = "btn btn-compact " + (book.sameCoverForFormats === "No" ? "btn-primary" : "btn-secondary");
+    }
+    yesBtn.onclick = () => { book.sameCoverForFormats = "Yes"; styleBtns(); renderCovers(); };
+    noBtn.onclick = () => { book.sameCoverForFormats = "No"; styleBtns(); renderCovers(); };
+    styleBtns();
+    row.appendChild(yesBtn); row.appendChild(noBtn);
+    sameCoverField.appendChild(row);
+  }
+
+  function renderCovers(){
+    coverWrap.innerHTML = "";
+    const formats = bookFormatList(book);
+    const needsPerFormat = formats.length > 1 && book.sameCoverForFormats === "No";
+    if(needsPerFormat){
+      formats.forEach(f=>{
+        const opt = BOOK_FORMAT_OPTIONS.find(o=>o.value===f);
+        const cf = document.createElement('div');
+        cf.className = "field";
+        cf.innerHTML = `<label>${opt.label} cover image</label>`;
+        cf.appendChild(buildFormatCoverUpload(book, f, opt.label));
+        coverWrap.appendChild(cf);
+      });
+    } else {
+      const cf = document.createElement('div');
+      cf.className = "field";
+      cf.innerHTML = `<label>Cover image</label>`;
+      cf.appendChild(buildBookCoverUpload(book));
+      coverWrap.appendChild(cf);
+    }
+  }
+
+  function renderFormatCheckboxes(){
+    formatsRow.innerHTML = "";
+    BOOK_FORMAT_OPTIONS.forEach(opt=>{
+      const lbl = document.createElement('label');
+      lbl.style.cssText = "display:flex;align-items:center;gap:6px;font-family:'Lora',serif;font-size:14px;cursor:pointer;";
+      const cb = document.createElement('input');
+      cb.type = "checkbox";
+      cb.style.cssText = "accent-color:var(--terracotta);width:17px;height:17px;flex-shrink:0;";
+      cb.checked = book.formats.indexOf(opt.value) !== -1;
+      cb.addEventListener('change', ()=>{
+        if(cb.checked){
+          if(book.formats.indexOf(opt.value) === -1) book.formats.push(opt.value);
+        } else {
+          if(book.formats.length === 1){
+            // Always keep at least one format selected.
+            cb.checked = true;
+            return;
+          }
+          book.formats = book.formats.filter(f=>f!==opt.value);
+          if(book.formatCovers) delete book.formatCovers[opt.value];
+        }
+        renderFormatPrices();
+        renderSameCoverQuestion();
+        renderCovers();
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(opt.label));
+      formatsRow.appendChild(lbl);
+    });
+  }
+
+  renderFormatCheckboxes();
+  renderFormatPrices();
+  renderSameCoverQuestion();
+  renderCovers();
 
   const seriesField = document.createElement('div');
   seriesField.className = "field";
@@ -4345,17 +4585,27 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           if(info.totalBooks) book.seriesTotalBooks = info.totalBooks;
           if(info.regularPrice) book.seriesRegularPrice = info.regularPrice;
           if(info.soireePrice) book.seriesSoireePrice = info.soireePrice;
+          if(info.seriesFormats) book.seriesFormats = info.seriesFormats.slice();
+          if(info.seriesFormatPrices) book.seriesFormatPrices = JSON.parse(JSON.stringify(info.seriesFormatPrices));
+          if(info.seriesHasCover) book.seriesHasCover = info.seriesHasCover;
+          if(info.seriesCoverUrl) book.seriesCoverUrl = info.seriesCoverUrl;
+          if(info.seriesCoverUploadedAt) book.seriesCoverUploadedAt = info.seriesCoverUploadedAt;
         }
         renderSeriesDetails();
       }
       function pickNew(){
         // A brand-new series starts completely blank — never inherits
-        // another series' book count or pricing.
+        // another series' book count, pricing, formats, or cover.
         book._seriesPickMode = "new";
         book.seriesName = "";
         book.seriesTotalBooks = "";
         book.seriesRegularPrice = "";
         book.seriesSoireePrice = "";
+        book.seriesFormats = ["paperback"];
+        book.seriesFormatPrices = {};
+        book.seriesHasCover = "";
+        book.seriesCoverUrl = "";
+        book.seriesCoverUploadedAt = null;
         renderSeriesDetails();
       }
 
@@ -4404,6 +4654,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     bookLabel.style.cssText = "font-weight:600;";
     const bookNumInp = document.createElement('input');
     bookNumInp.type = "number";
+    bookNumInp.inputMode = "numeric";
+    bookNumInp.pattern = "[0-9]*";
     bookNumInp.min = "1";
     bookNumInp.style.width = "70px";
     bookNumInp.placeholder = "#";
@@ -4413,6 +4665,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     ofSpan.textContent = "of";
     const totalInp = document.createElement('input');
     totalInp.type = "number";
+    totalInp.inputMode = "numeric";
+    totalInp.pattern = "[0-9]*";
     totalInp.min = "1";
     totalInp.style.width = "70px";
     totalInp.placeholder = "#";
@@ -4425,33 +4679,122 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     numField.appendChild(numRow);
     seriesDetailsWrap.appendChild(numField);
 
-    const sRegField = document.createElement('div');
-    sRegField.className = "field";
-    sRegField.innerHTML = `<label>Series regular price</label><div class="help">The price for the whole set, since attendees can buy the series as one.</div>`;
-    const sRegInp = document.createElement('input');
-    sRegInp.type = "number";
-    sRegInp.inputMode = "decimal";
-    sRegInp.step = "0.01";
-    sRegInp.min = "0";
-    sRegInp.placeholder = "e.g. 49.99";
-    sRegInp.value = book.seriesRegularPrice || "";
-    sRegInp.addEventListener('input', ()=>{ book.seriesRegularPrice = sRegInp.value; });
-    sRegField.appendChild(sRegInp);
-    seriesDetailsWrap.appendChild(sRegField);
+    // ---- What format(s) does the series come in? ----
+    ensureSeriesFormats(book);
+    const seriesFormatsField = document.createElement('div');
+    seriesFormatsField.className = "field";
+    seriesFormatsField.innerHTML = `<label>What formats does this series come in?</label>`;
+    const seriesFormatsRow = document.createElement('div');
+    seriesFormatsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;";
+    seriesFormatsField.appendChild(seriesFormatsRow);
+    seriesDetailsWrap.appendChild(seriesFormatsField);
 
-    const sSoireeField = document.createElement('div');
-    sSoireeField.className = "field";
-    sSoireeField.innerHTML = `<label>Series Soirée price</label><div class="help">Optional — a discount on the whole set for the Soirée.</div>`;
-    const sSoireeInp = document.createElement('input');
-    sSoireeInp.type = "number";
-    sSoireeInp.inputMode = "decimal";
-    sSoireeInp.step = "0.01";
-    sSoireeInp.min = "0";
-    sSoireeInp.placeholder = "e.g. 42.99";
-    sSoireeInp.value = book.seriesSoireePrice || "";
-    sSoireeInp.addEventListener('input', ()=>{ book.seriesSoireePrice = sSoireeInp.value; });
-    sSoireeField.appendChild(sSoireeInp);
-    seriesDetailsWrap.appendChild(sSoireeField);
+    const seriesPricesWrap = document.createElement('div');
+    seriesDetailsWrap.appendChild(seriesPricesWrap);
+
+    function renderSeriesFormatPrices(){
+      seriesPricesWrap.innerHTML = "";
+      book.seriesFormats.forEach(f=>{
+        const opt = SERIES_FORMAT_OPTIONS.find(o=>o.value===f);
+        const fp = book.seriesFormatPrices[f] = book.seriesFormatPrices[f] || {regular:"", soiree:""};
+
+        const regF = document.createElement('div');
+        regF.className = "field";
+        regF.innerHTML = `<label>${opt.label} series regular price</label><div class="help">The price for the whole set in this format, since attendees can buy the series as one.</div>`;
+        const regI = document.createElement('input');
+        regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
+        regI.placeholder = "e.g. 49.99";
+        regI.value = fp.regular || "";
+        regI.addEventListener('input', ()=>{ fp.regular = regI.value; });
+        regF.appendChild(regI);
+        seriesPricesWrap.appendChild(regF);
+
+        const soiF = document.createElement('div');
+        soiF.className = "field";
+        soiF.innerHTML = `<label>${opt.label} series Soirée price</label><div class="help">Optional — a discount on the whole set for the Soirée.</div>`;
+        const soiI = document.createElement('input');
+        soiI.type = "number"; soiI.inputMode = "decimal"; soiI.step = "0.01"; soiI.min = "0";
+        soiI.placeholder = "e.g. 42.99";
+        soiI.value = fp.soiree || "";
+        soiI.addEventListener('input', ()=>{ fp.soiree = soiI.value; });
+        soiF.appendChild(soiI);
+        seriesPricesWrap.appendChild(soiF);
+      });
+    }
+
+    function renderSeriesFormatCheckboxes(){
+      seriesFormatsRow.innerHTML = "";
+      SERIES_FORMAT_OPTIONS.forEach(opt=>{
+        const lbl = document.createElement('label');
+        lbl.style.cssText = "display:flex;align-items:center;gap:6px;font-family:'Lora',serif;font-size:14px;cursor:pointer;";
+        const cb = document.createElement('input');
+        cb.type = "checkbox";
+        cb.style.cssText = "accent-color:var(--terracotta);width:17px;height:17px;flex-shrink:0;";
+        cb.checked = book.seriesFormats.indexOf(opt.value) !== -1;
+        cb.addEventListener('change', ()=>{
+          if(cb.checked){
+            if(book.seriesFormats.indexOf(opt.value) === -1) book.seriesFormats.push(opt.value);
+          } else {
+            if(book.seriesFormats.length === 1){
+              cb.checked = true;
+              return;
+            }
+            book.seriesFormats = book.seriesFormats.filter(f=>f!==opt.value);
+          }
+          renderSeriesFormatPrices();
+        });
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(opt.label));
+        seriesFormatsRow.appendChild(lbl);
+      });
+    }
+    renderSeriesFormatCheckboxes();
+    renderSeriesFormatPrices();
+
+    // ---- Special cover/image for the series (e.g. the box set art) ----
+    const seriesCoverQField = document.createElement('div');
+    seriesCoverQField.className = "field";
+    seriesCoverQField.innerHTML = `<label>Is there a special cover or image for the series?</label>`;
+    const seriesCoverRow = document.createElement('div');
+    seriesCoverRow.className = "btn-row";
+    seriesCoverRow.style.marginTop = "4px";
+    const seriesCoverYesBtn = document.createElement('button');
+    seriesCoverYesBtn.type = "button";
+    seriesCoverYesBtn.textContent = "Yes";
+    const seriesCoverNoBtn = document.createElement('button');
+    seriesCoverNoBtn.type = "button";
+    seriesCoverNoBtn.textContent = "No";
+    seriesCoverRow.appendChild(seriesCoverYesBtn);
+    seriesCoverRow.appendChild(seriesCoverNoBtn);
+    seriesCoverQField.appendChild(seriesCoverRow);
+    seriesDetailsWrap.appendChild(seriesCoverQField);
+
+    const seriesCoverUploadWrap = document.createElement('div');
+    seriesDetailsWrap.appendChild(seriesCoverUploadWrap);
+
+    function styleSeriesCoverToggle(){
+      seriesCoverYesBtn.className = "btn btn-compact " + (book.seriesHasCover === "Yes" ? "btn-primary" : "btn-secondary");
+      seriesCoverNoBtn.className = "btn btn-compact " + (book.seriesHasCover === "No" ? "btn-primary" : "btn-secondary");
+    }
+    function renderSeriesCoverUpload(){
+      seriesCoverUploadWrap.innerHTML = "";
+      if(book.seriesHasCover !== "Yes") return;
+      const cf = document.createElement('div');
+      cf.className = "field";
+      cf.innerHTML = `<label>Series cover image</label>`;
+      cf.appendChild(buildSeriesCoverUpload(book));
+      seriesCoverUploadWrap.appendChild(cf);
+    }
+    seriesCoverYesBtn.onclick = () => { book.seriesHasCover = "Yes"; styleSeriesCoverToggle(); renderSeriesCoverUpload(); };
+    seriesCoverNoBtn.onclick = () => {
+      book.seriesHasCover = "No";
+      book.seriesCoverUrl = "";
+      book.seriesCoverUploadedAt = null;
+      styleSeriesCoverToggle();
+      renderSeriesCoverUpload();
+    };
+    styleSeriesCoverToggle();
+    renderSeriesCoverUpload();
   }
 
   seriesYesBtn.onclick = () => {
@@ -4463,6 +4806,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     book.isSeries = "No";
     book.seriesName = ""; book.seriesBookNumber = ""; book.seriesTotalBooks = "";
     book.seriesRegularPrice = ""; book.seriesSoireePrice = "";
+    book.seriesFormats = []; book.seriesFormatPrices = {};
+    book.seriesHasCover = ""; book.seriesCoverUrl = ""; book.seriesCoverUploadedAt = null;
     styleSeriesToggle();
     renderSeriesDetails();
   };
@@ -4482,11 +4827,32 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
   const blurbField = document.createElement('div');
   blurbField.className = "field";
-  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label><div class="help">Optional but encouraged.</div>`;
+  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label><div class="help">Optional but encouraged. Select some text and tap B or I to add emphasis.</div>`;
+
+  const blurbToolbar = document.createElement('div');
+  blurbToolbar.style.cssText = "display:flex;gap:6px;margin-bottom:6px;";
+  const blurbBoldBtn = document.createElement('button');
+  blurbBoldBtn.type = "button";
+  blurbBoldBtn.textContent = "B";
+  blurbBoldBtn.title = "Bold";
+  blurbBoldBtn.style.cssText = "width:32px;height:30px;font-weight:700;font-size:15px;"
+    + "border:1px solid rgba(12,30,61,0.2);border-radius:6px;background:#fff;cursor:pointer;";
+  const blurbItalicBtn = document.createElement('button');
+  blurbItalicBtn.type = "button";
+  blurbItalicBtn.textContent = "I";
+  blurbItalicBtn.title = "Italic";
+  blurbItalicBtn.style.cssText = "width:32px;height:30px;font-style:italic;font-weight:600;font-size:15px;"
+    + "border:1px solid rgba(12,30,61,0.2);border-radius:6px;background:#fff;cursor:pointer;";
+  blurbToolbar.appendChild(blurbBoldBtn);
+  blurbToolbar.appendChild(blurbItalicBtn);
+  blurbField.appendChild(blurbToolbar);
+
   const blurbTa = document.createElement('textarea');
   blurbTa.rows = 4;
   blurbTa.value = book.blurb || "";
   blurbTa.addEventListener('input', ()=>{ book.blurb = blurbTa.value; });
+  blurbBoldBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "**"); });
+  blurbItalicBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "*"); });
   blurbField.appendChild(blurbTa);
   wrap.appendChild(blurbField);
 
@@ -4502,6 +4868,24 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   wrap.appendChild(removeLink);
 
   return wrap;
+}
+
+// Tapping a file input directly already opens the OS's "Photo Library /
+// Take Photo / Choose File" menu, but focus landing some other way — the
+// mobile keyboard's own next-field arrow, physical Tab, or this screen's
+// own forward-navigation — just leaves the field silently focused, since a
+// file input has no cursor to show. That's what made it feel like the down
+// arrow "slipped past" the cover field. This reopens that same native menu
+// the instant focus lands here by anything other than a direct tap/click
+// (tracked via mousedown/touchstart so a real tap isn't double-triggered).
+function attachFocusOpensFilePicker(inp){
+  let viaPointer = false;
+  inp.addEventListener('mousedown', ()=>{ viaPointer = true; });
+  inp.addEventListener('touchstart', ()=>{ viaPointer = true; });
+  inp.addEventListener('focus', ()=>{
+    if(viaPointer){ viaPointer = false; return; }
+    inp.click();
+  });
 }
 
 /* Adapted from buildFileUpload (headshot/logo) for a per-book cover: writes
@@ -4524,6 +4908,7 @@ function buildBookCoverUpload(book){
   inp.type = "file";
   inp.accept = "image/png,image/jpeg,image/webp";
   inp.style.cssText = "font-family:'Montserrat',sans-serif;font-size:13px;";
+  attachFocusOpensFilePicker(inp);
 
   inp.addEventListener('change', async ()=>{
     const file = inp.files[0];
@@ -4570,6 +4955,145 @@ function buildBookCoverUpload(book){
   return box;
 }
 
+/* Per-format book cover (used when a book has more than one format and the
+   covers differ between them) — same pattern as buildBookCoverUpload, but
+   stores into book.formatCovers[format] instead of the book directly, and
+   keys the Drive upload off book id + format so each format's cover is its
+   own file. */
+function buildFormatCoverUpload(book, format, formatLabel){
+  if(!book.formatCovers) book.formatCovers = {};
+  if(!book.formatCovers[format]) book.formatCovers[format] = {coverUrl:"", coverUploadedAt:null};
+  const entry = book.formatCovers[format];
+  const fileKey = "preorderCover_" + book.id + "_" + format;
+  const box = document.createElement('div');
+  const status = document.createElement('div');
+  status.className = "help";
+  status.style.marginTop = "0";
+  status.textContent = entry.coverUrl
+    ? (entry.coverUploadedAt ? `Uploaded — last updated ${new Date(entry.coverUploadedAt).toLocaleString()}` : "Uploaded.")
+    : "No cover uploaded yet.";
+  const preview = document.createElement('img');
+  preview.style.cssText = "max-width:120px;max-height:160px;border-radius:8px;display:none;margin:10px 0;box-shadow:0 2px 10px rgba(12,30,61,0.12);";
+
+  const inp = document.createElement('input');
+  inp.type = "file";
+  inp.accept = "image/png,image/jpeg,image/webp";
+  inp.style.cssText = "font-family:'Montserrat',sans-serif;font-size:13px;";
+  attachFocusOpensFilePicker(inp);
+
+  inp.addEventListener('change', async ()=>{
+    const file = inp.files[0];
+    if(!file) return;
+    status.textContent = "Uploading…";
+    try{
+      const dataUrl = await resizeImage(file, 1600, "image/jpeg", 0.85);
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, base64: dataUrl, mimeType:"image/jpeg" })
+      });
+      const json = await res.json();
+      if(!json || !json.success) throw new Error((json && json.error) || "Upload didn't complete.");
+
+      entry.coverUrl = json.url;
+      entry.coverUploadedAt = new Date().toISOString();
+      localCache.set(fileStorageKey(fileKey), dataUrl, true);
+      await saveAuthorData(currentAuthor, currentData);
+
+      status.textContent = `Uploaded — last updated ${new Date(entry.coverUploadedAt).toLocaleString()}`;
+      preview.src = dataUrl;
+      preview.style.display = "block";
+      showToast((formatLabel || "Cover") + " cover uploaded!");
+    }catch(e){
+      status.textContent = "Upload didn't go through (" + (e.message || "unknown error") + ") — please try again.";
+      showToast("Cover upload failed — please try again");
+    }
+  });
+
+  box.appendChild(status);
+  box.appendChild(preview);
+  box.appendChild(inp);
+
+  if(entry.coverUrl){
+    const idMatch = entry.coverUrl.match(/\/d\/([^/]+)/);
+    preview.src = idMatch ? `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800` : entry.coverUrl;
+    preview.style.display = "block";
+  } else if(entry.coverUploadedAt){
+    localCache.get(fileStorageKey(fileKey), true).then(res=>{
+      if(res){ preview.src = res.value; preview.style.display = "block"; }
+    });
+  }
+  return box;
+}
+
+/* Series-level cover (e.g. box-set art) — same pattern again, but stores on
+   the book's own seriesCoverUrl/seriesCoverUploadedAt fields, which get
+   synced across every book in the series via pickExisting()/getSeriesInfo(). */
+function buildSeriesCoverUpload(book){
+  // Kept under the "preorderCover_" prefix (not a new one) so it lands in
+  // the same Drive folder/branch as other presale covers server-side.
+  const fileKey = "preorderCover_series_" + book.id;
+  const box = document.createElement('div');
+  const status = document.createElement('div');
+  status.className = "help";
+  status.style.marginTop = "0";
+  status.textContent = book.seriesCoverUrl
+    ? (book.seriesCoverUploadedAt ? `Uploaded — last updated ${new Date(book.seriesCoverUploadedAt).toLocaleString()}` : "Uploaded.")
+    : "No cover uploaded yet.";
+  const preview = document.createElement('img');
+  preview.style.cssText = "max-width:120px;max-height:160px;border-radius:8px;display:none;margin:10px 0;box-shadow:0 2px 10px rgba(12,30,61,0.12);";
+
+  const inp = document.createElement('input');
+  inp.type = "file";
+  inp.accept = "image/png,image/jpeg,image/webp";
+  inp.style.cssText = "font-family:'Montserrat',sans-serif;font-size:13px;";
+  attachFocusOpensFilePicker(inp);
+
+  inp.addEventListener('change', async ()=>{
+    const file = inp.files[0];
+    if(!file) return;
+    status.textContent = "Uploading…";
+    try{
+      const dataUrl = await resizeImage(file, 1600, "image/jpeg", 0.85);
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, base64: dataUrl, mimeType:"image/jpeg" })
+      });
+      const json = await res.json();
+      if(!json || !json.success) throw new Error((json && json.error) || "Upload didn't complete.");
+
+      book.seriesCoverUrl = json.url;
+      book.seriesCoverUploadedAt = new Date().toISOString();
+      localCache.set(fileStorageKey(fileKey), dataUrl, true);
+      await saveAuthorData(currentAuthor, currentData);
+
+      status.textContent = `Uploaded — last updated ${new Date(book.seriesCoverUploadedAt).toLocaleString()}`;
+      preview.src = dataUrl;
+      preview.style.display = "block";
+      showToast("Series cover uploaded!");
+    }catch(e){
+      status.textContent = "Upload didn't go through (" + (e.message || "unknown error") + ") — please try again.";
+      showToast("Cover upload failed — please try again");
+    }
+  });
+
+  box.appendChild(status);
+  box.appendChild(preview);
+  box.appendChild(inp);
+
+  if(book.seriesCoverUrl){
+    const idMatch = book.seriesCoverUrl.match(/\/d\/([^/]+)/);
+    preview.src = idMatch ? `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800` : book.seriesCoverUrl;
+    preview.style.display = "block";
+  } else if(book.seriesCoverUploadedAt){
+    localCache.get(fileStorageKey(fileKey), true).then(res=>{
+      if(res){ preview.src = res.value; preview.style.display = "block"; }
+    });
+  }
+  return box;
+}
+
 /* ---------- SCREEN: PREORDER PREVIEW ---------- */
 function renderPreorderPreview(){
   app.appendChild(logoLockup());
@@ -4599,20 +5123,31 @@ function renderPreorderPreview(){
     const grid = document.createElement('div');
     grid.style.cssText = "display:flex;flex-direction:column;gap:14px;margin-top:8px;";
     books.forEach(book => {
-      const reg = parseFloat(book.regularPrice);
-      const soiree = parseFloat(book.soireePrice);
-      const hasSoiree = !isNaN(soiree) && book.soireePrice !== "";
-      const displayPrice = hasSoiree ? soiree : reg;
+      ensureBookFormats(book);
+      const formatLabels = {paperback:"Paperback", hardcover:"Hardcover", specialEdition:"Special Edition"};
+      const soireeNote = `<span style="font-size:11px;color:#777;font-weight:400;">(special Soiree pricing)</span>`;
+      const priceLines = bookFormatList(book).map(f=>{
+        const fp = bookFormatPrice(book, f);
+        const reg = parseFloat(fp.regular);
+        const soiree = parseFloat(fp.soiree);
+        const hasSoiree = !isNaN(soiree) && fp.soiree !== "";
+        if(isNaN(reg) || fp.regular === "") return "";
+        const fmtLabel = bookFormatList(book).length > 1 ? `<span style="font-weight:600;">${formatLabels[f]||f}:</span> ` : "";
+        return hasSoiree
+          ? `<div>${fmtLabel}<span style="text-decoration:line-through;opacity:.6;margin-right:6px;">$${reg.toFixed(2)}</span><strong>$${soiree.toFixed(2)}</strong> ${soireeNote}</div>`
+          : `<div>${fmtLabel}<strong>$${reg.toFixed(2)}</strong></div>`;
+      }).filter(Boolean).join("");
 
       const tile = document.createElement('div');
       tile.style.cssText = "display:flex;gap:14px;padding:14px;border:1px solid rgba(12,30,61,0.1);border-radius:10px;background:#fff;";
 
       const coverWrap = document.createElement('div');
       coverWrap.style.cssText = "flex:0 0 auto;width:80px;height:120px;border-radius:6px;overflow:hidden;background:var(--cream,#F7EFE1);display:flex;align-items:center;justify-content:center;";
-      if(book.coverUrl){
-        const idMatch = book.coverUrl.match(/\/d\/([^/]+)/);
+      const primaryCover = primaryBookCoverUrl(book);
+      if(primaryCover){
+        const idMatch = primaryCover.match(/\/d\/([^/]+)/);
         const img = document.createElement('img');
-        img.src = idMatch ? `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800` : book.coverUrl;
+        img.src = idMatch ? `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800` : primaryCover;
         img.style.cssText = "width:100%;height:100%;object-fit:cover;";
         coverWrap.appendChild(img);
       } else {
@@ -4622,18 +5157,9 @@ function renderPreorderPreview(){
 
       const info = document.createElement('div');
       info.style.cssText = "flex:1;min-width:0;";
-      let priceHtml = "";
-      const soireeNote = `<span style="font-size:11px;color:#777;font-weight:400;">(special Soiree pricing)</span>`;
-      if(!isNaN(reg) && book.regularPrice !== ""){
-        if(hasSoiree){
-          priceHtml = `<span style="text-decoration:line-through;opacity:.6;margin-right:6px;">$${reg.toFixed(2)}</span><strong>$${soiree.toFixed(2)}</strong> ${soireeNote}`;
-        } else {
-          priceHtml = `<strong>$${reg.toFixed(2)}</strong>`;
-        }
-      }
       info.innerHTML = `
         <div style="font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:600;">${escapeAttr(book.title)}</div>
-        <div style="margin:4px 0;">${priceHtml}</div>
+        <div style="margin:4px 0;">${priceLines}</div>
       `;
 
       if(book.tagLine && book.tagLine.trim()){
@@ -4648,7 +5174,7 @@ function renderPreorderPreview(){
         blurbWrap.style.cssText = "margin-top:6px;";
 
         const blurbText = document.createElement('div');
-        blurbText.textContent = book.blurb;
+        blurbText.innerHTML = renderFormattedBlurb(book.blurb);
         blurbText.style.cssText = "font-size:13px;color:#555;line-height:1.4;"
           + "display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;";
         blurbWrap.appendChild(blurbText);
@@ -4702,6 +5228,110 @@ function renderPreorderPreview(){
 }
 
 /* ---------- SCREEN: PRESELLING BOOKS STATUS ---------- */
+/* ---------- STRIPE CONNECT PAYOUT SETUP (used on the Preselling Books hub) ---------- */
+function buildStripeConnectSection(){
+  const wrap = document.createElement('div');
+  wrap.style.cssText = "margin-top:30px;padding-top:22px;border-top:1px solid rgba(12,30,61,0.1);";
+
+  const heading = document.createElement('div');
+  heading.style.cssText = "font-weight:700;font-size:15px;margin-bottom:6px;";
+  heading.textContent = "Getting paid for your presale books";
+  wrap.appendChild(heading);
+
+  const bodyWrap = document.createElement('div');
+  wrap.appendChild(bodyWrap);
+
+  function renderBody(){
+    bodyWrap.innerHTML = "";
+    const status = currentData.stripeOnboardingStatus || "not_started";
+
+    const statusLine = document.createElement('div');
+    statusLine.className = "help";
+    statusLine.style.marginBottom = "10px";
+
+    const btnRow = document.createElement('div');
+    btnRow.className = "btn-row";
+
+    if(status === "complete"){
+      statusLine.innerHTML = `${statusIcon(true).outerHTML} <span style="margin-left:4px;">You're all set — Stripe will send your presale earnings straight to your bank account.</span>`;
+      statusLine.style.display = "flex";
+      statusLine.style.alignItems = "center";
+    } else if(status === "pending_review"){
+      statusLine.textContent = "Stripe has what they need and is reviewing your info — this usually only takes a bit. Nothing else for you to do right now.";
+    } else if(status === "pending"){
+      statusLine.textContent = "You've started setting up how you get paid, but haven't finished yet.";
+      const continueBtn = document.createElement('button');
+      continueBtn.className = "btn btn-primary btn-compact";
+      continueBtn.textContent = "Continue setting up payouts";
+      continueBtn.onclick = () => startConnectOnboarding(continueBtn);
+      btnRow.appendChild(continueBtn);
+    } else {
+      statusLine.textContent = "To actually receive money from your presale sales, Stripe needs a few details from you (bank account, tax info). This only takes a few minutes.";
+      const startBtn = document.createElement('button');
+      startBtn.className = "btn btn-primary btn-compact";
+      startBtn.textContent = "Set up how I get paid";
+      startBtn.onclick = () => startConnectOnboarding(startBtn);
+      btnRow.appendChild(startBtn);
+    }
+
+    bodyWrap.appendChild(statusLine);
+    if(btnRow.children.length) bodyWrap.appendChild(btnRow);
+
+    if(status !== "not_started"){
+      const refreshLink = document.createElement('div');
+      refreshLink.className = "home-link";
+      refreshLink.style.marginTop = "12px";
+      refreshLink.textContent = "Check my status";
+      refreshLink.onclick = () => refreshConnectStatusUI(refreshLink);
+      bodyWrap.appendChild(refreshLink);
+    }
+  }
+
+  async function startConnectOnboarding(btn){
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Connecting to Stripe\u2026";
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "getConnectOnboardingLink", authorName: currentAuthor })
+      });
+      const json = await res.json();
+      if(!json || !json.success) throw new Error((json && json.error) || "Couldn't start setup.");
+      currentData.stripeOnboardingStatus = "pending";
+      window.open(json.url, "_blank");
+      renderBody();
+    }catch(e){
+      showToast("Couldn't reach Stripe \u2014 please try again");
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  }
+
+  async function refreshConnectStatusUI(link){
+    const originalText = link.textContent;
+    link.textContent = "Checking\u2026";
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "refreshConnectStatus", authorName: currentAuthor })
+      });
+      const json = await res.json();
+      if(!json || !json.success) throw new Error((json && json.error) || "Couldn't check status.");
+      currentData.stripeOnboardingStatus = json.status;
+      renderBody();
+    }catch(e){
+      showToast("Couldn't check status \u2014 please try again");
+      link.textContent = originalText;
+    }
+  }
+
+  renderBody();
+  return wrap;
+}
+
 function renderPreorderStatus(){
   app.appendChild(logoLockup());
   const card = document.createElement('div');
@@ -4737,6 +5367,8 @@ function renderPreorderStatus(){
       showInfoModal("Any information about your books you have already entered will not be deleted. So if you change your mind in the future and want to do a presale, you will not need to reenter that information.");
     };
     card.appendChild(optOutBtn);
+
+    card.appendChild(buildStripeConnectSection());
 
   } else if(plan === "No"){
     const text = document.createElement('div');
@@ -5620,6 +6252,54 @@ function renderField(f){
   return wrap;
 }
 function escapeAttr(s){ return String(s).replace(/"/g,'&quot;'); }
+
+// Full HTML-escape (all five special chars), used before turning plain text
+// into innerHTML — unlike escapeAttr, which only guards quotes inside an
+// attribute string.
+function escapeHtmlFull(s){
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Renders a blurb's lightweight **bold** / *italic* markup as safe HTML.
+// The raw text is HTML-escaped first, so this can never inject markup from
+// what an author typed — only the ** and * runs we add ourselves afterward
+// turn into <strong>/<em>. Bold is matched before italic so **text** isn't
+// first swallowed by the italic rule.
+function renderFormattedBlurb(text){
+  let html = escapeHtmlFull(text || "");
+  html = html.replace(/\*\*([^\n*](?:[^\n*]|\*(?!\*))*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^\n*]+?)\*/g, '<em>$1</em>');
+  return html.replace(/\n/g, '<br>');
+}
+
+// Wraps (or, if already wrapped, unwraps) the current textarea selection
+// with a marker ("**" for bold, "*" for italic) — used by the Blurb field's
+// B/I toolbar buttons.
+function wrapTextareaSelection(textarea, marker){
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  const selected = val.slice(start, end);
+  const before = val.slice(0, start);
+  const after = val.slice(end);
+  let newVal, newStart, newEnd;
+  if(selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker)){
+    const inner = selected.slice(marker.length, selected.length - marker.length);
+    newVal = before + inner + after;
+    newStart = start;
+    newEnd = start + inner.length;
+  } else {
+    newVal = before + marker + selected + marker + after;
+    newStart = start + marker.length;
+    newEnd = newStart + selected.length;
+  }
+  textarea.value = newVal;
+  textarea.focus();
+  textarea.setSelectionRange(newStart, newEnd);
+  textarea.dispatchEvent(new Event('input'));
+}
 
 // Status-toggle labels like "...(will mark this completed on your To-Do
 // list)" should read as a subtle aside, not compete with the main choice —
