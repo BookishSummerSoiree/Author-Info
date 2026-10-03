@@ -803,7 +803,7 @@ const STEPS = {
     shortcutDynamicButton: {
       watchField: "preorderPlan",
       showWhen: ["Yes", "I'm not sure. Give me more information."],
-      label: "Add my presale books",
+      label: "Let's make sure your Stripe account is ready to go",
       target: "preorder-payouts"
     }
   },
@@ -5352,8 +5352,15 @@ function buildStripeConnectSection(){
       const json = await res.json();
       if(!json || !json.success) throw new Error((json && json.error) || "Couldn't start setup.");
       currentData.stripeOnboardingStatus = "pending";
-      window.open(json.url, "_blank");
-      renderBody();
+      // Save first so nothing's lost, then navigate THIS tab straight to
+      // Stripe rather than trying to open a new one. A new tab only opens
+      // without being blocked if it happens in the same instant as the
+      // tap \u2014 by the time this fetch finishes, mobile Safari no longer
+      // treats it as user-initiated and silently blocks it, which is what
+      // made the button look like it just didn't do anything. Stripe sends
+      // them right back to this app's URL when they're done.
+      await saveAuthorData(currentAuthor, currentData);
+      window.location.href = json.url;
     }catch(e){
       showToast("Couldn't reach Stripe \u2014 please try again");
       btn.disabled = false;
