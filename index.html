@@ -777,12 +777,23 @@ const STEPS = {
 
   "preorder-plan": {
     title: "Presale Books for the Soirée", icon: FLOURISH.bookStack,
-    sub: "Preselling books at the Soirée got a major glow-up! It's never been easier for attendees to preorder books.<br><br>Will you have any books available for presale before the Soirée?",
+    sub: "Preselling books at the Soirée got a major glow-up! It's never been easier for attendees to preorder books.<br><br>" +
+      "<strong>How it works for attendees:</strong><br>" +
+      "All the books in one place — one cart, one transaction, no bouncing between each author's own form.<br>" +
+      "They can sort by title, author, price, Soirée pricing (any book an author has given a slight discount for the Soirée), series, or format (paperback, hardcover, special edition, box set).<br>" +
+      "They can also choose whether they want a book signed and/or personalized, right when they add it to their cart.<br><br>" +
+      "<strong>How it works for authors:</strong><br>" +
+      "You enter your book info — title, cover, blurb, price, formats — and the site does the rest. You sit back and write your next bestseller.<br>" +
+      "The hope is that attendees who came in for someone else's books see yours mixed in and end up buying from you too — books they might never have gone looking for on their own.<br>" +
+      "Knowing ahead of time who wants a copy (and whether it should be signed or personalized) also means you can bring exactly what you need, instead of guessing.<br><br>" +
+      "<u>With each purchase:</u> you'll get an email for every order — the book(s) purchased, price paid, whether it should be signed, and any personalization. Payment goes straight to your Stripe account automatically, and you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.<br><br>" +
+      "<strong>Stripe fees:</strong> Stripe's standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
+      "Will you have any books available for presale before the Soirée?",
     fields: [
       {key:"preorderPlan", label:"", type:"radio", required:true, options:[
         "Yes",
         "No",
-        "It's probably a no, but tell me about this new way of handling presales"
+        "I'm not sure. Give me more information."
       ]}
     ],
     next: (d) => {
@@ -791,7 +802,7 @@ const STEPS = {
     },
     shortcutDynamicButton: {
       watchField: "preorderPlan",
-      showWhen: ["Yes", "It's probably a no, but tell me about this new way of handling presales"],
+      showWhen: ["Yes", "I'm not sure. Give me more information."],
       label: "Add my presale books",
       target: "preorder-payouts"
     }
@@ -3998,7 +4009,7 @@ function renderPreorderBooks(step){
     <div class="section-sub" style="margin-top:14px;">${step.sub || ""}</div>
   `;
 
-  if(currentData.preorderPlan === "It's probably a no, but tell me about this new way of handling presales"){
+  if(currentData.preorderPlan === "I'm not sure. Give me more information."){
     const optOutBtn = document.createElement('button');
     optOutBtn.type = "button";
     optOutBtn.className = "btn btn-secondary btn-tiny";
