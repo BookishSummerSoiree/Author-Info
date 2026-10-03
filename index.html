@@ -787,17 +787,26 @@ const STEPS = {
     ],
     next: (d) => {
       if(d.preorderPlan === "No") return "swag";
-      const sellingTitles = (d.sellingTitlesList || []).filter(t => t && t.trim());
-      if(d.sellingPlan === "I plan to sell books at the Soirée" && sellingTitles.length > 0){
-        return "preorder-from-selling";
-      }
-      return "preorder-books";
+      return "preorder-payouts";
     },
     shortcutDynamicButton: {
       watchField: "preorderPlan",
       showWhen: ["Yes", "It's probably a no, but tell me about this new way of handling presales"],
       label: "Add my presale books",
-      target: "preorder-books"
+      target: "preorder-payouts"
+    }
+  },
+
+  "preorder-payouts": {
+    title: "Getting Paid for Your Presale Books", icon: FLOURISH.bookStack,
+    sub: "Before you list your presale books, let's get your payouts set up so your presale money actually reaches you.",
+    customType: "preorderPayouts",
+    next: (d) => {
+      const sellingTitles = (d.sellingTitlesList || []).filter(t => t && t.trim());
+      if(d.sellingPlan === "I plan to sell books at the Soirée" && sellingTitles.length > 0){
+        return "preorder-from-selling";
+      }
+      return "preorder-books";
     }
   },
 
@@ -926,7 +935,7 @@ const STEPS = {
 };
 
 const STEP_ORDER = ["general-info","bingo-book","misc-fun","fun-stuff-cont","links","link-verification",
-  "book-signing-plan","preorder-books","books-selling",
+  "book-signing-plan","preorder-payouts","preorder-books","books-selling",
   "swag","prizes","donation-knowledge","donation-titles","dropoff","social-media","notifications","final-comments"];
 
 const NAV_MENU = [
@@ -951,7 +960,7 @@ function sellingSectionTarget(){
   return currentData.sellingPlan === "I plan to sell books at the Soirée" ? "books-selling" : "book-signing-plan";
 }
 function preorderSectionTarget(){
-  return currentData.preorderPlan === "Yes" ? "preorder-books" : "preorder-plan";
+  return currentData.preorderPlan === "Yes" ? "preorder-payouts" : "preorder-plan";
 }
 function prizesSectionTarget(){
   return currentData.prizesPlan === "I'd love to donate some prizes!" ? "donation-knowledge" : "prizes";
@@ -2082,7 +2091,11 @@ function computeChecklist(){
     const hasPreorderBooks = Array.isArray(d.preorderBooksList) && d.preorderBooksList.some(b => b && b.title && b.title.trim());
     const row = {label:"Presale Books", preview: hasPreorderBooks ? preorderBooksText().replace(/\n/g," / ") : null,
       done: d.preorderBooksListStatus === "complete", required:true, target:"preorder-books", addLabel:"Need to add"};
-    const rows = [row];
+    const rows = [
+      {label:"Getting paid for your presale books", preview: d.stripeOnboardingStatus === "complete" ? "all set" : null,
+       done: d.stripeOnboardingStatus === "complete", required:true, target:"preorder-payouts", addLabel:"Need to set up"},
+      row
+    ];
 
     // Per-book required fields: title, cover, and regular price. Only
     // flagged for books that at least have a title (so a fully-blank
@@ -2594,6 +2607,12 @@ function renderSection(){
   if(step.customType === "preorderFromSelling"){
     app.removeChild(app.lastChild); // remove the logo lockup we just added; renderPreorderFromSelling adds its own
     renderPreorderFromSelling(step);
+    return;
+  }
+
+  if(step.customType === "preorderPayouts"){
+    app.removeChild(app.lastChild); // remove the logo lockup we just added; renderPreorderPayouts adds its own
+    renderPreorderPayouts(step);
     return;
   }
 
@@ -5330,6 +5349,105 @@ function buildStripeConnectSection(){
 
   renderBody();
   return wrap;
+}
+
+/* Shown right after an author says they'll do a presale, before they enter
+   any books, so the "how do I actually get paid" step is part of the main
+   flow instead of only being reachable later from the home-screen
+   "Preselling books" menu item (which a first-time author would have no
+   reason to visit). */
+function renderPreorderPayouts(step){
+  app.appendChild(logoLockup());
+  const card = document.createElement('div');
+  card.className = "card";
+  const titleImg = step.icon ? `<img src="${step.icon}">` : "";
+  card.innerHTML = `
+    <div class="eyebrow">Bookish Summer Soirée</div>
+    <h1 class="section-title">${titleImg}${step.title}</h1>
+    <div class="section-sub">${step.sub || ""}</div>
+  `;
+
+  card.appendChild(buildStripeConnectSection());
+
+  const enteredViaShortcut = cameFromWhatsLeft || cameFromNavSubmenu;
+
+  if(!enteredViaShortcut){
+    const savePrompt = document.createElement('div');
+    savePrompt.className = "save-prompt";
+    savePrompt.textContent = "Ready to move to the next section?";
+    card.appendChild(savePrompt);
+
+    const btnRow = document.createElement('div');
+    btnRow.className = "btn-row";
+    const back = document.createElement('button');
+    back.className = "btn btn-secondary btn-tiny";
+    back.textContent = "← Back";
+    back.onclick = async () => {
+      await saveAuthorData(currentAuthor, currentData);
+      goBackSection();
+    };
+    const saveNext = document.createElement('button');
+    saveNext.className = "btn btn-primary btn-compact";
+    saveNext.textContent = "Continue";
+    saveNext.onclick = () => { advanceStep(step); };
+    async function saveExitHandler(){
+      await saveAuthorData(currentAuthor, currentData);
+      showToast("Saved!");
+      currentScreen = "home";
+      render();
+    }
+    btnRow.appendChild(saveNext);
+    card.appendChild(btnRow);
+
+    const btnRowSecondary = document.createElement('div');
+    btnRowSecondary.className = "btn-row";
+    btnRowSecondary.style.marginTop = "20px";
+    btnRowSecondary.appendChild(back);
+    card.appendChild(btnRowSecondary);
+
+    const homeLink = document.createElement('div');
+    homeLink.className = "home-link";
+    homeLink.textContent = "Save & return to home screen";
+    homeLink.onclick = saveExitHandler;
+    card.appendChild(homeLink);
+
+    appendMainScreenLink(card, "Save & return to main screen");
+  } else {
+    if(cameFromNavSubmenu){
+      const nextSectionLink = document.createElement('div');
+      nextSectionLink.className = "home-link";
+      nextSectionLink.textContent = "Go to the next section";
+      nextSectionLink.onclick = () => { cameFromNavSubmenu = false; advanceStep(step); };
+      card.appendChild(nextSectionLink);
+    }
+
+    const firstLink = document.createElement('div');
+    firstLink.className = "home-link";
+    firstLink.textContent = cameFromWhatsLeft ? "Return to To-Do list" : "Choose a different section";
+    firstLink.onclick = async () => {
+      if(cameFromWhatsLeft){
+        cameFromWhatsLeft = false;
+        currentScreen = "whats-left";
+      } else {
+        currentScreen = "nav-submenu";
+      }
+      render();
+    };
+    card.appendChild(firstLink);
+
+    const homeLink = document.createElement('div');
+    homeLink.className = "home-link";
+    homeLink.textContent = "Return to home screen";
+    homeLink.onclick = async () => {
+      cameFromWhatsLeft = false;
+      cameFromNavSubmenu = false;
+      currentScreen = "home";
+      render();
+    };
+    card.appendChild(homeLink);
+  }
+
+  app.appendChild(card);
 }
 
 function renderPreorderStatus(){
