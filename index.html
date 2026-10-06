@@ -1261,8 +1261,32 @@ function hideSaveOverlay(){
   document.getElementById('saveOverlay').classList.remove('show');
 }
 
+/* Tell Soirée HQ how far along this author is, so HQ's author card can show
+   "To-Do list: X/X" and know whether they're donating prizes or swag. Uses the
+   exact same required-task count as the My To-Do List screen. */
+const HQ_FIREBASE_URL = "https://soiree-prizes-2027-default-rtdb.firebaseio.com";
+function reportProgressToHQ(author){
+  try{
+    if(!author || author !== currentAuthor || !currentData) return;
+    let total = 0, done = 0;
+    computeChecklist().forEach(s => s.rows.forEach(r => { if(r.required){ total++; if(r.done) done++; } }));
+    const d = currentData;
+    const yn = (v, yes, no) => v === yes ? "yes" : (v === no ? "no" : "");
+    fetch(HQ_FIREBASE_URL + "/authorProgress/" + slug(author) + ".json", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: author, done, total,
+        prizes: yn(d.prizesPlan, "I'd love to donate some prizes!", "I'll pass on donating prizes."),
+        swag:   yn(d.swagPlan, "I'd love to get some of my swag in the totes!", "I'll pass on adding swag to the totes."),
+        ts: Date.now()
+      })
+    }).catch(()=>{});
+  }catch(e){}
+}
+
 async function saveAuthorData(author, data){
   localCache.set(storageKey(author), JSON.stringify(data), true);
+  reportProgressToHQ(author);
   const { meta, headshotUrl, logoUrl, ...fieldData } = data;
   showSaveOverlayIfSlow();
   try{
@@ -1755,6 +1779,7 @@ async function selectAuthor(name){
   stepHistory = [];
   render();
   currentData = await loadAuthorData(name);
+  reportProgressToHQ(name);
   if(!currentData.meta.welcomeSeen){
     currentScreen = "welcome";
   } else {
