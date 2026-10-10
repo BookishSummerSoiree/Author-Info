@@ -7170,14 +7170,21 @@ async function restoreNavStateAndRender(){
   // Deep link from the order emails: ?author=NAME&go=orders
   try{
     const qp = new URLSearchParams(location.search);
-    if(qp.get("go") === "orders" && qp.get("author")){
+    const goTo = qp.get("go");
+    if(["orders","start","presale"].indexOf(goTo) >= 0 && qp.get("author")){
       history.replaceState(null, "", location.pathname);
       currentAuthor = qp.get("author");
       currentScreen = "loading";
       render();
       currentData = await loadAuthorData(currentAuthor);
       presaleOrdersState.lines = null;
-      currentScreen = currentData.meta.welcomeSeen ? "presale-orders" : "welcome";
+      stepHistory = []; cameFromWhatsLeft = false; cameFromNavSubmenu = false;
+      if(goTo === "orders"){
+        currentScreen = currentData.meta.welcomeSeen ? "presale-orders" : "welcome";
+      } else {
+        currentStepId = goTo === "presale" ? "preorder-books" : "general-info";
+        currentScreen = "section";
+      }
       render();
       return;
     }
