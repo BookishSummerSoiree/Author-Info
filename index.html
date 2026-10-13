@@ -5362,9 +5362,10 @@ function buildStripeConnectSection(){
     }
   }
 
-  // Popup asking which email Stripe should use. Pre-filled with the
-  // General Info email when there is one. Resolves to the email, or null if
-  // they cancel.
+  // Popup that handles the three situations: the author already has a Stripe
+  // account, doesn't have one, or isn't sure. The setup call is the same for
+  // all three; only the wording and which email we ask for differ. Resolves
+  // to the email, or null if they cancel.
   function askStripeEmail(prefill){
     return new Promise(resolve => {
       const overlay = document.createElement('div');
@@ -5373,20 +5374,57 @@ function buildStripeConnectSection(){
       cardEl.className = "info-modal-card";
       const text = document.createElement('div');
       text.className = "info-modal-text";
-      text.textContent = "What email should Stripe use for your payout account? It can be the same as the email you gave us for the Soirée, or a different one \u2014 for example, the one you already use to log in to Stripe.";
+      text.style.marginBottom = "10px";
+      text.textContent = "Do you already have a Stripe account?";
       cardEl.appendChild(text);
+
+      const choices = [
+        {id:"have",   label:"Yes, I already have one"},
+        {id:"none",   label:"No, I don't have one"},
+        {id:"unsure", label:"I'm not sure"}
+      ];
+      const helps = {
+        have:   "Enter the email you log in to Stripe with. On Stripe's next page, sign in and it can reuse the details you already have.",
+        none:   "That's fine — Stripe will walk you through creating one. Which email would you like to use for it?",
+        unsure: "No problem. Enter the email you'd most likely have used. On Stripe's next page, if that email has an account Stripe will let you sign in; if not, it will simply set one up for you. (To check first, try logging in at dashboard.stripe.com.)"
+      };
+      let picked = "";
+      const list = document.createElement('div');
+      list.style.cssText = "display:flex;flex-direction:column;gap:8px;text-align:left;margin-bottom:8px;";
+      const helpEl = document.createElement('div');
+      helpEl.style.cssText = "font-size:13.5px;color:#6b7080;line-height:1.5;margin:6px 0 4px;text-align:left;display:none;";
       const input = document.createElement('input');
       input.type = "email";
       input.value = prefill || "";
       input.placeholder = "you@example.com";
-      input.style.cssText = "width:100%;box-sizing:border-box;padding:12px;border:1.5px solid rgba(12,30,61,0.2);border-radius:8px;font-size:16px;margin:12px 0;";
+      input.style.cssText = "width:100%;box-sizing:border-box;padding:12px;border:1.5px solid rgba(12,30,61,0.2);border-radius:8px;font-size:16px;margin:8px 0 12px;display:none;";
+
+      choices.forEach(c => {
+        const lab = document.createElement('label');
+        lab.style.cssText = "display:flex;gap:10px;align-items:center;font-size:15px;cursor:pointer;";
+        const r = document.createElement('input');
+        r.type = "radio"; r.name = "stripe-have"; r.style.cssText = "width:20px;height:20px;accent-color:#E4593F;";
+        r.onchange = () => {
+          picked = c.id;
+          helpEl.textContent = helps[c.id];
+          helpEl.style.display = "block";
+          input.style.display = "block";
+        };
+        lab.appendChild(r);
+        lab.appendChild(document.createTextNode(c.label));
+        list.appendChild(lab);
+      });
+      cardEl.appendChild(list);
+      cardEl.appendChild(helpEl);
       cardEl.appendChild(input);
+
       const row = document.createElement('div');
       row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;justify-content:center;";
       const ok = document.createElement('button');
       ok.className = "btn btn-primary btn-compact";
       ok.textContent = "Continue to Stripe";
       ok.onclick = () => {
+        if(!picked){ showToast("Please pick one of the three options."); return; }
         const v = input.value.trim();
         if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)){ showToast("Please enter a valid email address."); return; }
         overlay.remove(); resolve(v);
@@ -5399,7 +5437,6 @@ function buildStripeConnectSection(){
       cardEl.appendChild(row);
       overlay.appendChild(cardEl);
       document.body.appendChild(overlay);
-      setTimeout(() => input.focus(), 50);
     });
   }
 
