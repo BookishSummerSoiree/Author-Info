@@ -787,9 +787,13 @@ const STEPS = {
       "Knowing ahead of time who wants a copy (and whether it should be signed or personalized) also means you can bring exactly what you need, instead of guessing.<br><br>" +
       "<strong>How you get notified and paid:</strong><br>" +
       "You'll get an email for every order that includes: name of person who ordered, the book(s) purchased, price paid, whether it should be signed, and any personalization.<br><br>" +
-      "Payment goes straight to your Stripe account automatically, and you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.<br><br>" +
+      "Payment comes in one of two options:" +
+      "<ul style=\"margin:8px 0 14px 22px;padding:0;\">" +
+      "<li style=\"margin-bottom:8px;\"><strong>Stripe:</strong> Payment immediately into your Stripe account (easy to set up if you don't have one). Then you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.</li>" +
+      "<li><strong>Venmo:</strong> The money would be put in the Soirée Stripe account. Those funds would be deposited in the Soirée bank account weekly, and Nicole would send you a Venmo within about two weeks. It's slower and a little more labor intensive, but it works.</li>" +
+      "</ul>" +
       "<strong>Stripe fees:</strong><br>" +
-      "Stripe's standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
+      "No matter how you prefer to be paid, Stripe is the one processing the order, so their fees still apply. Their standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
       "Will you have any books available for presale before the Soirée?",
     fields: [
       {key:"preorderPlan", label:"", type:"radio", required:true, options:[
@@ -1397,6 +1401,7 @@ function render(){
   else if(currentScreen === "admin-login") renderAdminLogin();
   else if(currentScreen === "admin") renderAdmin();
   else if(currentScreen === "edit-authors") renderEditAuthors();
+  else if(currentScreen === "payouts") renderPayouts();
   else if(currentScreen === "whats-left") renderWhatsLeft();
   else if(currentScreen === "continue-complete") renderContinueComplete();
   else if(currentScreen === "fix-links") renderFixLinks();
@@ -1581,6 +1586,193 @@ function renderAdminLogin(){
 }
 
 /* ---------- SCREEN: ADMIN ---------- */
+/* Presale payout ledger — ONE source used by both Soirée HQ ("Presales" tab)
+   and the Author Info admin screen. Both read and write the same Orders
+   sheet through the Apps Script backend, so checking something off in one
+   place shows up in the other (press Refresh, or reopen the screen). */
+const PayoutLedger = (function(){
+  const KEY_STORE = "bss:payoutKey";
+  function getKey(){ try{ return sessionStorage.getItem(KEY_STORE) || ""; }catch(e){ return ""; } }
+  function setKey(k){ try{ sessionStorage.setItem(KEY_STORE, k); }catch(e){} }
+  function clearKey(){ try{ sessionStorage.removeItem(KEY_STORE); }catch(e){} }
+  const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const money = n => "$" + (Number(n) || 0).toFixed(2);
+  const today = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); };
+  const prettyDate = ms => ms ? new Date(ms).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}) : "";
+
+  function mount(root, opts){
+    const T = Object.assign({ text:"#1a1a18", muted:"#6b6b67", border:"rgba(0,0,0,.15)", accent:"#534AB7", soft:"rgba(0,0,0,.04)", ok:"#1D9E75", warn:"#BA7517" }, opts.theme || {});
+    const st = { groups:null, filter:"send", error:"", needKey:!getKey(), loading:false };
+
+    async function call(action, extra){
+      const res = await fetch(opts.apiUrl, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+        body: JSON.stringify(Object.assign({ action:action, key:getKey() }, extra || {})) });
+      return res.json();
+    }
+    async function load(){
+      if(!getKey()){ st.needKey = true; paint(); return; }
+      st.loading = true; st.error = ""; paint();
+      try{
+        const json = await call("getPayoutLedger");
+        if(json && json.badKey){ clearKey(); st.needKey = true; st.error = json.error || "Wrong payout password."; }
+        else if(json && json.success){ st.groups = json.groups || []; st.needKey = false; }
+        else st.error = (json && json.error) || "Couldn't load payouts.";
+      }catch(e){ st.error = "Couldn't reach the server. Check your connection and try again."; }
+      st.loading = false; paint();
+    }
+    async function mark(g, sent, date){
+      const prev = { paid:g.paid, paidDate:g.paidDate };
+      g.paid = sent; g.paidDate = sent ? (date || today()) : ""; paint();
+      try{
+        const json = await call("setPayoutSent", { sessionId:g.sessionId, author:g.author, sent:sent, date:g.paidDate });
+        if(!json || !json.success) throw new Error((json && json.error) || "save failed");
+        g.paidDate = json.paidDate || g.paidDate;
+      }catch(e){ g.paid = prev.paid; g.paidDate = prev.paidDate; alert("Couldn't save that. Please try again."); }
+      paint();
+    }
+
+    const btn = (label, primary, onclick) => {
+      const b = document.createElement("button");
+      b.textContent = label; b.onclick = onclick;
+      b.style.cssText = "font:inherit;font-size:13px;font-weight:600;border-radius:999px;padding:8px 16px;cursor:pointer;border:1.5px solid " + (primary ? T.accent : T.border) + ";background:" + (primary ? T.accent : "transparent") + ";color:" + (primary ? "#fff" : T.text) + ";";
+      return b;
+    };
+
+    function paint(){
+      root.innerHTML = "";
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "color:" + T.text + ";";
+      root.appendChild(wrap);
+
+      if(st.needKey){
+        wrap.innerHTML = '<div style="font-size:14px;margin-bottom:10px;">Enter your payout password to see presale payouts.</div>'
+          + (st.error ? '<div style="color:#b00020;font-size:13px;margin-bottom:8px;">' + esc(st.error) + '</div>' : "");
+        const inp = document.createElement("input");
+        inp.type = "password"; inp.placeholder = "Payout password";
+        inp.style.cssText = "font:inherit;font-size:16px;padding:10px;border:1.5px solid " + T.border + ";border-radius:8px;width:100%;box-sizing:border-box;margin-bottom:10px;background:transparent;color:" + T.text + ";";
+        wrap.appendChild(inp);
+        const go = () => { const v = inp.value.trim(); if(!v) return; setKey(v); st.error = ""; load(); };
+        inp.onkeydown = e => { if(e.key === "Enter") go(); };
+        wrap.appendChild(btn("Unlock", true, go));
+        return;
+      }
+
+      const top = document.createElement("div");
+      top.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;";
+      top.appendChild(btn(st.loading ? "Refreshing…" : "Refresh", false, load));
+      top.appendChild(btn("Lock", false, () => { clearKey(); st.groups = null; st.needKey = true; paint(); }));
+      wrap.appendChild(top);
+
+      if(st.error){ const e = document.createElement("div"); e.style.cssText = "color:#b00020;font-size:13px;margin-bottom:10px;"; e.textContent = st.error; wrap.appendChild(e); }
+      if(st.groups === null){ if(!st.loading){ const d = document.createElement("div"); d.textContent = "Loading…"; wrap.appendChild(d); } return; }
+
+      const send = st.groups.filter(g => g.method === "manual" && !g.paid);
+      const sentList = st.groups.filter(g => (g.method === "manual" || g.method === "issue") && g.paid);
+      const stripe = st.groups.filter(g => g.method === "stripe");
+      const issues = st.groups.filter(g => g.method === "issue" && !g.paid);
+      const tabs = [["send","To send (" + send.length + ")"],["sent","Sent (" + sentList.length + ")"],["stripe","Paid via Stripe (" + stripe.length + ")"]];
+      if(issues.length) tabs.push(["issue","Needs attention (" + issues.length + ")"]);
+      const tabRow = document.createElement("div");
+      tabRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;";
+      tabs.forEach(([id,label]) => tabRow.appendChild(btn(label, st.filter === id, () => { st.filter = id; paint(); })));
+      wrap.appendChild(tabRow);
+
+      let list = st.filter === "sent" ? sentList : st.filter === "stripe" ? stripe : st.filter === "issue" ? issues : send;
+
+      if(st.filter === "send" && send.length){
+        const by = {};
+        send.forEach(g => { const a = by[g.author] || (by[g.author] = { n:0, total:0, venmo:g.venmo, pref:g.authorPref }); a.n++; a.total += g.net; });
+        const box = document.createElement("div");
+        box.style.cssText = "background:" + T.soft + ";border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px;";
+        box.innerHTML = '<div style="font-weight:700;margin-bottom:4px;">You owe, by author</div>'
+          + Object.keys(by).sort().map(a => '<div>' + esc(a) + ' — <b>' + money(by[a].total) + '</b> (' + by[a].n + ' order' + (by[a].n===1?"":"s") + ')'
+            + (by[a].venmo ? ' · Venmo ' + esc(by[a].venmo) : ' · <span style="color:' + T.warn + ';">no Venmo name on file</span>') + '</div>').join("");
+        wrap.appendChild(box);
+      }
+      if(st.filter === "stripe"){
+        const n = document.createElement("div");
+        n.style.cssText = "font-size:12.5px;color:" + T.muted + ";margin-bottom:10px;";
+        n.textContent = "These were sent to the author's Stripe account automatically. Nothing to do.";
+        wrap.appendChild(n);
+      }
+      if(!list.length){
+        const e = document.createElement("div");
+        e.style.cssText = "color:" + T.muted + ";font-size:14px;padding:14px 0;";
+        e.textContent = st.filter === "send" ? "Nothing waiting on you right now." : "Nothing here yet.";
+        wrap.appendChild(e); return;
+      }
+
+      list.forEach(g => {
+        const c = document.createElement("div");
+        c.style.cssText = "border:1px solid " + T.border + ";border-radius:12px;padding:12px 14px;margin-bottom:10px;";
+        const books = g.books.map(b => esc(b.title) + (b.signed ? " · signed" : "") + (b.personalizedName ? " · personalized to " + esc(b.personalizedName) : "") + " — " + money(b.price)).join("<br>");
+        c.innerHTML =
+          '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;"><b>' + esc(g.author) + '</b><span style="color:' + T.muted + ';font-size:12.5px;">' + esc(prettyDate(g.createdAt)) + '</span></div>'
+          + '<div style="font-size:12.5px;color:' + T.muted + ';margin:2px 0 8px;">Ordered by ' + esc(g.buyerName || "a reader") + '</div>'
+          + '<div style="font-size:13.5px;line-height:1.5;margin-bottom:8px;">' + books + '</div>'
+          + '<table style="font-size:13px;border-collapse:collapse;"><tbody>'
+          + '<tr><td style="padding:1px 14px 1px 0;">Subtotal</td><td style="text-align:right;">' + money(g.subtotal) + '</td></tr>'
+          + '<tr><td style="padding:1px 14px 1px 0;">Tax collected</td><td style="text-align:right;">' + money(g.tax) + '</td></tr>'
+          + '<tr><td style="padding:1px 14px 1px 0;">Stripe fee (their share)</td><td style="text-align:right;">-' + money(g.feeShare) + '</td></tr>'
+          + '<tr><td style="padding:1px 14px 1px 0;"><b>' + (g.method === "stripe" ? "Sent to Stripe" : "Send to author") + '</b></td><td style="text-align:right;"><b>' + money(g.net) + '</b></td></tr>'
+          + '</tbody></table>';
+        if(g.method === "manual" || g.method === "issue"){
+          const info = document.createElement("div");
+          info.style.cssText = "font-size:13px;margin-top:8px;";
+          info.innerHTML = g.venmo ? 'Venmo: <b>' + esc(g.venmo) + '</b>' : '<span style="color:' + T.warn + ';">No Venmo name on file for this author yet.</span>';
+          if(g.method === "issue") info.innerHTML += '<div style="color:#b00020;margin-top:4px;">Stripe transfer problem: ' + esc(g.transferStatus) + '. You can pay this one by Venmo and check it off.</div>';
+          c.appendChild(info);
+          const row = document.createElement("label");
+          row.style.cssText = "display:flex;align-items:center;gap:10px;margin-top:10px;cursor:pointer;flex-wrap:wrap;";
+          const cb = document.createElement("input");
+          cb.type = "checkbox"; cb.checked = !!g.paid; cb.style.cssText = "width:22px;height:22px;accent-color:" + T.accent + ";";
+          cb.onchange = () => mark(g, cb.checked, g.paidDate || today());
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode("Payment sent"));
+          if(g.paid){
+            const d = document.createElement("input");
+            d.type = "date"; d.value = g.paidDate || today();
+            d.style.cssText = "font:inherit;font-size:14px;padding:4px 8px;border:1px solid " + T.border + ";border-radius:8px;background:transparent;color:" + T.text + ";";
+            d.onclick = e => e.stopPropagation();
+            d.onchange = () => mark(g, true, d.value);
+            row.appendChild(d);
+          }
+          c.appendChild(row);
+        }
+        wrap.appendChild(c);
+      });
+    }
+
+    paint();
+    if(getKey()) load();
+    return { reload: load };
+  }
+  return { mount: mount };
+})();
+
+
+/* ---------- SCREEN: PRESALE PAYOUTS (admin) ---------- */
+function renderPayouts(){
+  app.appendChild(logoLockup());
+  const card = document.createElement('div');
+  card.className = "card";
+  card.innerHTML = `
+    <div class="eyebrow">Admin</div>
+    <h1 class="section-title">Presale Payouts</h1>
+    <div class="section-sub">Every presale order, who still needs to be paid, and what to send. This is the same list as the Presales tab in HQ \u2014 check something off in one place and it shows up in the other.</div>
+  `;
+  const holder = document.createElement('div');
+  card.appendChild(holder);
+  const back = document.createElement('div');
+  back.className = "home-link";
+  back.style.marginTop = "22px";
+  back.textContent = "Back to Admin Tools";
+  back.onclick = () => { currentScreen = "admin"; render(); };
+  card.appendChild(back);
+  app.appendChild(card);
+  PayoutLedger.mount(holder, { apiUrl: APPS_SCRIPT_URL, theme: { text:"#0C1E3D", muted:"#6b7080", border:"rgba(12,30,61,0.18)", accent:"#E4593F", soft:"rgba(12,30,61,0.05)", ok:"#94A177", warn:"#b8741a" } });
+}
+
 function renderAdmin(){
   app.appendChild(logoLockup());
   const card = document.createElement('div');
@@ -1595,6 +1787,13 @@ function renderAdmin(){
   editBtn.textContent = "Edit Author List";
   editBtn.onclick = () => { currentScreen = "edit-authors"; render(); };
   card.appendChild(editBtn);
+
+  const payoutsBtn = document.createElement('button');
+  payoutsBtn.className = "btn btn-primary btn-compact";
+  payoutsBtn.style.marginTop = "12px";
+  payoutsBtn.textContent = "Presale Payouts";
+  payoutsBtn.onclick = () => { currentScreen = "payouts"; render(); };
+  card.appendChild(payoutsBtn);
 
   const hr = document.createElement('hr');
   hr.style.cssText = "margin:26px 0;border:none;border-top:1px solid rgba(12,30,61,0.1);";
@@ -2109,8 +2308,8 @@ function computeChecklist(){
     const row = {label:"Presale Books", preview: hasPreorderBooks ? preorderBooksText().replace(/\n/g," / ") : null,
       done: d.preorderBooksListStatus === "complete", required:true, target:"preorder-books", addLabel:"Need to add"};
     const rows = [
-      {label:"Getting paid for your presale books", preview: d.stripeOnboardingStatus === "complete" ? "all set" : null,
-       done: d.stripeOnboardingStatus === "complete", required:true, target:"preorder-payouts", addLabel:"Need to set up"},
+      {label:"Getting paid for your presale books", preview: (d.stripeOnboardingStatus === "complete" || (d.payoutMethod === "venmo" && (d.venmoHandle||"").trim())) ? "all set" : null,
+       done: d.stripeOnboardingStatus === "complete" || (d.payoutMethod === "venmo" && !!(d.venmoHandle||"").trim()), required:true, target:"preorder-payouts", addLabel:"Need to set up"},
       row
     ];
 
@@ -3664,7 +3863,7 @@ function renderSellingTitles(step){
   renderEntries();
 
   const statusToggle = buildStatusToggle("sellingListStatus", [
-    {value:"complete", text:"This is all the books I'll be selling at the Soiree (will mark this completed on your To-Do list)"},
+    {value:"complete", text:"This is all the books I'll be selling at the Soirée (will mark this completed on your To-Do list)"},
     {value:"tentative", text:"I will be coming back and adding more books (will keep this active on your To-Do list)"}
   ]);
   card.appendChild(statusToggle);
@@ -4115,7 +4314,7 @@ function renderPreorderBooks(step){
   renderEntries();
 
   const statusToggle = buildStatusToggle("preorderBooksListStatus", [
-    {value:"complete", text:"This is all the books I'll be preselling at the Soiree (will mark this completed on your To-Do list)"},
+    {value:"complete", text:"This is all the books I'll be preselling at the Soirée (will mark this completed on your To-Do list)"},
     {value:"tentative", text:"I will be coming back and adding more books (will keep this active on your To-Do list)"}
   ]);
   card.appendChild(statusToggle);
@@ -5200,7 +5399,7 @@ function renderPreorderPreview(){
     books.forEach(book => {
       ensureBookFormats(book);
       const formatLabels = {paperback:"Paperback", hardcover:"Hardcover", specialEdition:"Special Edition"};
-      const soireeNote = `<span style="font-size:11px;color:#777;font-weight:400;">(special Soiree pricing)</span>`;
+      const soireeNote = `<span style="font-size:11px;color:#777;font-weight:400;">(special Soirée pricing)</span>`;
       const priceLines = bookFormatList(book).map(f=>{
         const fp = bookFormatPrice(book, f);
         const reg = parseFloat(fp.regular);
@@ -5319,6 +5518,9 @@ function buildStripeConnectSection(){
   function renderBody(){
     bodyWrap.innerHTML = "";
     const status = currentData.stripeOnboardingStatus || "not_started";
+    const method = currentData.payoutMethod || (status !== "not_started" ? "stripe" : "");
+    if(!method){ renderChooser(); return; }
+    if(method === "venmo"){ renderVenmo(); return; }
 
     const statusLine = document.createElement('div');
     statusLine.className = "help";
@@ -5360,6 +5562,80 @@ function buildStripeConnectSection(){
       refreshLink.onclick = () => refreshConnectStatusUI(refreshLink);
       bodyWrap.appendChild(refreshLink);
     }
+
+    if(status !== "complete"){
+      const switchLink = document.createElement('div');
+      switchLink.className = "home-link";
+      switchLink.style.marginTop = "12px";
+      switchLink.textContent = "I'd rather be paid by Venmo instead";
+      switchLink.onclick = () => choosePayout("venmo");
+      bodyWrap.appendChild(switchLink);
+    }
+  }
+
+  async function choosePayout(m){
+    currentData.payoutMethod = m;
+    try{ await saveAuthorData(currentAuthor, currentData); }catch(e){}
+    renderBody();
+  }
+
+  function renderChooser(){
+    const q = document.createElement('div');
+    q.className = "help";
+    q.style.marginBottom = "12px";
+    q.textContent = "How would you like to be paid for your presale books?";
+    bodyWrap.appendChild(q);
+    const row = document.createElement('div');
+    row.className = "btn-row";
+    const stripeBtn = document.createElement('button');
+    stripeBtn.className = "btn btn-primary btn-compact";
+    stripeBtn.textContent = "Stripe (fastest)";
+    stripeBtn.onclick = () => choosePayout("stripe");
+    row.appendChild(stripeBtn);
+    const venmoBtn = document.createElement('button');
+    venmoBtn.className = "btn btn-secondary btn-compact";
+    venmoBtn.textContent = "Venmo (slower)";
+    venmoBtn.onclick = () => choosePayout("venmo");
+    row.appendChild(venmoBtn);
+    bodyWrap.appendChild(row);
+  }
+
+  function renderVenmo(){
+    const handle = (currentData.venmoHandle || "").trim();
+    const line = document.createElement('div');
+    line.className = "help";
+    line.style.marginBottom = "10px";
+    line.textContent = handle
+      ? `You're set to be paid by Venmo (${handle}). Nicole will send your earnings within about two weeks.`
+      : "You chose Venmo. Nicole will send your earnings within about two weeks. What's your Venmo username?";
+    bodyWrap.appendChild(line);
+
+    const input = document.createElement('input');
+    input.type = "text";
+    input.placeholder = "@your-venmo-name";
+    input.value = handle;
+    input.style.cssText = "width:100%;box-sizing:border-box;padding:12px;border:1.5px solid rgba(12,30,61,0.2);border-radius:8px;font-size:16px;margin-bottom:10px;";
+    bodyWrap.appendChild(input);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = "btn btn-primary btn-compact";
+    saveBtn.textContent = handle ? "Update my Venmo name" : "Save my Venmo name";
+    saveBtn.onclick = async () => {
+      const v = input.value.trim();
+      if(!v){ showToast("Please enter your Venmo username."); return; }
+      currentData.venmoHandle = v.startsWith("@") ? v : "@" + v;
+      saveBtn.disabled = true;
+      try{ await saveAuthorData(currentAuthor, currentData); showToast("Saved!"); }catch(e){ showToast("Couldn't save \u2014 please try again."); }
+      renderBody();
+    };
+    bodyWrap.appendChild(saveBtn);
+
+    const switchLink = document.createElement('div');
+    switchLink.className = "home-link";
+    switchLink.style.marginTop = "12px";
+    switchLink.textContent = "I'd rather be paid through Stripe (fastest)";
+    switchLink.onclick = () => choosePayout("stripe");
+    bodyWrap.appendChild(switchLink);
   }
 
   // Popup that handles the three situations: the author already has a Stripe
