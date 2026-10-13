@@ -5362,17 +5362,74 @@ function buildStripeConnectSection(){
     }
   }
 
-  async function startConnectOnboarding(btn){
+  // Popup asking which email Stripe should use. Pre-filled with the
+  // General Info email when there is one. Resolves to the email, or null if
+  // they cancel.
+  function askStripeEmail(prefill){
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = "info-modal-overlay";
+      const cardEl = document.createElement('div');
+      cardEl.className = "info-modal-card";
+      const text = document.createElement('div');
+      text.className = "info-modal-text";
+      text.textContent = "What email should Stripe use for your payout account? It can be the same as the email you gave us for the Soirée, or a different one \u2014 for example, the one you already use to log in to Stripe.";
+      cardEl.appendChild(text);
+      const input = document.createElement('input');
+      input.type = "email";
+      input.value = prefill || "";
+      input.placeholder = "you@example.com";
+      input.style.cssText = "width:100%;box-sizing:border-box;padding:12px;border:1.5px solid rgba(12,30,61,0.2);border-radius:8px;font-size:16px;margin:12px 0;";
+      cardEl.appendChild(input);
+      const row = document.createElement('div');
+      row.style.cssText = "display:flex;gap:10px;flex-wrap:wrap;justify-content:center;";
+      const ok = document.createElement('button');
+      ok.className = "btn btn-primary btn-compact";
+      ok.textContent = "Continue to Stripe";
+      ok.onclick = () => {
+        const v = input.value.trim();
+        if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)){ showToast("Please enter a valid email address."); return; }
+        overlay.remove(); resolve(v);
+      };
+      const cancel = document.createElement('button');
+      cancel.className = "btn btn-secondary btn-compact";
+      cancel.textContent = "Cancel";
+      cancel.onclick = () => { overlay.remove(); resolve(null); };
+      row.appendChild(ok); row.appendChild(cancel);
+      cardEl.appendChild(row);
+      overlay.appendChild(cardEl);
+      document.body.appendChild(overlay);
+      setTimeout(() => input.focus(), 50);
+    });
+  }
+
+  async function startConnectOnboarding(btn, forceAsk){
     const originalText = btn.textContent;
+    let stripeEmail = "";
+    const status0 = currentData.stripeOnboardingStatus || "not_started";
+    if(forceAsk || status0 === "not_started"){
+      stripeEmail = await askStripeEmail(currentData.email || "");
+      if(!stripeEmail) return;
+      // Nothing saved under General Info yet? Fill it in for them.
+      if(!(currentData.email || "").trim()){
+        currentData.email = stripeEmail;
+      }
+    }
     btn.disabled = true;
     btn.textContent = "Connecting to Stripe\u2026";
     try{
+      if(stripeEmail) await saveAuthorData(currentAuthor, currentData);
       const res = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "getConnectOnboardingLink", authorName: currentAuthor })
+        body: JSON.stringify({ action: "getConnectOnboardingLink", authorName: currentAuthor, contactEmail: stripeEmail })
       });
       const json = await res.json();
+      if(json && json.needsEmail){
+        btn.disabled = false;
+        btn.textContent = originalText;
+        return startConnectOnboarding(btn, true);
+      }
       if(!json || !json.success) throw new Error((json && json.error) || "Couldn't start setup.");
       currentData.stripeOnboardingStatus = "pending";
       // Save first so nothing's lost, then navigate THIS tab straight to
