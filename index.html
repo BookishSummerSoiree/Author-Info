@@ -769,7 +769,7 @@ const STEPS = {
 
   "books-selling": {
     title: "Books You Will Sell at the Soirée", icon: FLOURISH.book,
-    sub: "A list of all titles being sold by authors will be given to all attendees. They will be made aware that inventory will be limited and there's no guarantee any book will be available by the time they get to an author.<br><br>They will be displayed in the order you enter them.",
+    sub: "A list of all titles being sold by authors will be given to all attendees.<br><br>They will be made aware that inventory will be limited and there's no guarantee any book will be available by the time they get to an author.<br><br>They will be displayed in the order you enter them.",
     customType: "sellingTitles",
     next: () => "preorder-plan"
   },
@@ -785,8 +785,11 @@ const STEPS = {
       "You enter your book info — title, cover, blurb, price, formats — and the site does the rest. You sit back and write your next bestseller.<br>" +
       "The hope is that attendees who came in for someone else's books see yours mixed in and end up buying from you too — books they might never have gone looking for on their own.<br>" +
       "Knowing ahead of time who wants a copy (and whether it should be signed or personalized) also means you can bring exactly what you need, instead of guessing.<br><br>" +
-      "<u>With each purchase:</u> you'll get an email for every order — the book(s) purchased, price paid, whether it should be signed, and any personalization. Payment goes straight to your Stripe account automatically, and you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.<br><br>" +
-      "<strong>Stripe fees:</strong> Stripe's standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
+      "<strong>How you get notified and paid:</strong><br>" +
+      "You'll get an email for every order that includes: name of person who ordered, the book(s) purchased, price paid, whether it should be signed, and any personalization.<br><br>" +
+      "Payment goes straight to your Stripe account automatically, and you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.<br><br>" +
+      "<strong>Stripe fees:</strong><br>" +
+      "Stripe's standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
       "Will you have any books available for presale before the Soirée?",
     fields: [
       {key:"preorderPlan", label:"", type:"radio", required:true, options:[
@@ -1865,6 +1868,7 @@ function menuLabelHtml(label, suffix){
 }
 
 function renderHome(){
+  qrPreviewFromVerification = false;
   stepHistory = [];
   cameFromWhatsLeft = false;
   cameFromNavSubmenu = false;
@@ -3171,8 +3175,9 @@ function renderLinkVerification(step){
     card.innerHTML = `
       <div class="eyebrow">Quick Check</div>
       <h1 class="section-title">Link Verification</h1>
-      <div class="section-sub">Let's make sure all of your links work.</div>
-      <div class="info-box"><strong style="color:var(--terracotta);">CLICK EACH ADDRESS</strong> (it will open in a new window). Come right back here and let me know if it looks right.</div>
+      <div class="section-sub" style="margin-bottom:12px;">I won't be double checking every link from every author, so this is your chance to double check you didn't typo anything.</div>
+      <div class="section-sub" style="margin-bottom:12px;">Click each red link and it will open in a new window. Check it's the location you wanted, then come right back to this window and either let me know it's correct, or you can fix it.</div>
+      <div class="section-sub">You can see what your links will look like by either clicking the button at the bottom, or you can always access it on your personal Home Screen inside this app.</div>
     `;
 
     const fields = linkVerificationFields();
@@ -3285,6 +3290,22 @@ function renderLinkVerification(step){
       list.appendChild(row);
     });
     card.appendChild(list);
+
+    const seeLinksRow = document.createElement('div');
+    seeLinksRow.style.cssText = "text-align:center;margin:22px 0 6px;";
+    const seeLinksBtn = document.createElement('button');
+    seeLinksBtn.className = "btn btn-secondary btn-compact";
+    seeLinksBtn.textContent = "See your links";
+    seeLinksBtn.onclick = async () => {
+      await saveAuthorData(currentAuthor, currentData);
+      linkVerificationEditingKey = null;
+      qrPreviewFromVerification = true;
+      currentScreen = "qr-preview";
+      render();
+      window.scrollTo(0,0);
+    };
+    seeLinksRow.appendChild(seeLinksBtn);
+    card.appendChild(seeLinksRow);
 
     const unresolvedCount = fields.filter(f => !currentData.meta.linkVerification[f.key]).length;
 
@@ -6849,7 +6870,9 @@ async function generateAndUploadQrCodes(authorName, data){
 }
 
 /* ---------- SCREEN: QR SHEET PREVIEW ---------- */
+let qrPreviewFromVerification = false;
 function renderQrPreview(){
+  const fromVerification = qrPreviewFromVerification;
   app.appendChild(logoLockup());
   const card = document.createElement('div');
   card.className = "card";
@@ -6886,10 +6909,40 @@ function renderQrPreview(){
     });
   }
 
+  if(fromVerification){
+    const btnRow = document.createElement('div');
+    btnRow.className = "btn-row";
+    btnRow.style.cssText = "margin-top:18px;flex-wrap:wrap;";
+    const backBtn = document.createElement('button');
+    backBtn.className = "btn btn-secondary btn-compact";
+    backBtn.textContent = "Go back to Link Verification";
+    backBtn.onclick = () => { qrPreviewFromVerification = false; goToSection("link-verification"); };
+    btnRow.appendChild(backBtn);
+    const contBtn = document.createElement('button');
+    contBtn.className = "btn btn-primary btn-compact";
+    contBtn.textContent = "Save & Continue";
+    contBtn.onclick = async () => {
+      const lv = currentData.meta.linkVerification || {};
+      if(linkVerificationFields().some(f => !lv[f.key])){
+        showToast("Just need a decision on each of your links first \u2014 taking you back to Link Verification.");
+        qrPreviewFromVerification = false;
+        goToSection("link-verification");
+        return;
+      }
+      qrPreviewFromVerification = false;
+      currentData.meta.currentStep = "book-signing-plan";
+      await saveAuthorData(currentAuthor, currentData);
+      showToast("Saved!");
+      goToSection("book-signing-plan");
+    };
+    btnRow.appendChild(contBtn);
+    card.appendChild(btnRow);
+  }
+
   const link = document.createElement('div');
   link.className = "home-link";
   link.textContent = "Return to home";
-  link.onclick = () => { currentScreen = "home"; render(); };
+  link.onclick = () => { qrPreviewFromVerification = false; currentScreen = "home"; render(); };
   card.appendChild(link);
   appendMainScreenLink(card);
   app.appendChild(card);
