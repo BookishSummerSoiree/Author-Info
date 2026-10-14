@@ -1266,6 +1266,7 @@ function hideSaveOverlay(){
 }
 
 async function saveAuthorData(author, data){
+  try{ if(data === currentData) recomputeSeriesPrices(); }catch(e){}
   localCache.set(storageKey(author), JSON.stringify(data), true);
   const { meta, headshotUrl, logoUrl, ...fieldData } = data;
   showSaveOverlayIfSlow();
@@ -1425,6 +1426,7 @@ function render(){
   } else {
     window.scrollTo(0, 0);
   }
+  window.__lastRenderKey = currentScreen + ":" + (currentStepId || "");
   saveNavState();
 }
 
@@ -4469,6 +4471,14 @@ function renderPreorderBooks(step){
   if(!Array.isArray(currentData.preorderBooksList)){
     currentData.preorderBooksList = [];
   }
+  // Arriving at this screen fresh (from anywhere else, or after a reload):
+  // drop any book that never got a title and start every book collapsed, so
+  // the screen is just a tidy list plus the add button. (A re-draw of this
+  // same screen while someone is mid-edit leaves everything as it is.)
+  if(window.__lastRenderKey !== "section:" + currentStepId){
+    currentData.preorderBooksList = currentData.preorderBooksList.filter(b => b && b.title && b.title.trim());
+    currentData.preorderBooksList.forEach(b => { b._expanded = false; });
+  }
   // Backfill ids/expansion state for any books saved before this existed.
   // A lone book starts expanded (nothing to collapse yet); multiple books
   // start collapsed so the screen doesn't open crazy-long.
@@ -4809,8 +4819,88 @@ function getSeriesInfo(name, currentBook){
   return {
     totalBooks: match.seriesTotalBooks, regularPrice: match.seriesRegularPrice, soireePrice: match.seriesSoireePrice,
     seriesFormats: match.seriesFormats, seriesFormatPrices: match.seriesFormatPrices,
+    seriesDiscount: seriesDiscountOf(match),
     seriesHasCover: match.seriesHasCover, seriesCoverUrl: match.seriesCoverUrl, seriesCoverUploadedAt: match.seriesCoverUploadedAt
   };
+}
+
+/* ---- Series price helper ----
+   Sums the regular prices of every book entered so far in the same series,
+   for one format ("paperback" / "hardcover"). A Box Set has no per-book
+   equivalent, so it can't be added up. */
+function seriesBooksFor(book){
+  const name = (book.seriesName || "").trim().toLowerCase();
+  if(!name) return [book];
+  return (currentData.preorderBooksList || []).filter(b =>
+    b && b.isSeries === "Yes" && (b.seriesName || "").trim().toLowerCase() === name);
+}
+function seriesSumForFormat(book, fmt){
+  if(fmt !== "paperback" && fmt !== "hardcover") return null;
+  const books = seriesBooksFor(book);
+  let total = 0, counted = 0;
+  books.forEach(b=>{
+    ensureBookFormats(b);
+    let fp = b.formatPrices[fmt];
+    let v = fp ? parseFloat(fp.regular) : NaN;
+    if(isNaN(v)){
+      // book doesn't come in that format: use its own first listed price
+      for(let i=0;i<b.formats.length;i++){
+        const alt = parseFloat((b.formatPrices[b.formats[i]] || {}).regular);
+        if(!isNaN(alt)){ v = alt; break; }
+      }
+    }
+    if(!isNaN(v)){ total += v; counted++; }
+  });
+  return { total: Math.round(total * 100) / 100, counted: counted, entered: books.length };
+}
+
+function seriesDiscountOf(book){
+  if(book.seriesDiscount && book.seriesDiscount.type) return book.seriesDiscount;
+  const sib = seriesBooksFor(book).find(b => b.seriesDiscount && b.seriesDiscount.type);
+  return sib ? sib.seriesDiscount : null;
+}
+function setSeriesDiscount(book, d){
+  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value}; });
+}
+function discountedSeriesTotal(total, d){
+  const v = parseFloat(d && d.value);
+  if(!d || isNaN(v) || v <= 0 || d.type === "none") return total;
+  const out = d.type === "percent" ? total * (1 - Math.min(v,100)/100) : total - v;
+  return Math.max(0, Math.round(out * 100) / 100);
+}
+function seriesDiscountText(d){
+  const v = parseFloat(d && d.value);
+  if(!d || isNaN(v) || v <= 0) return "";
+  return d.type === "percent" ? (v + "%") : ("$" + v.toFixed(2));
+}
+// Keeps every series' price in step with its books: adds up the regular
+// prices of the series' books and applies the series discount. Runs on every
+// save and whenever a book's price changes. Series set to "custom" (the
+// author typed their own price) are left alone.
+function recomputeSeriesPrices(){
+  const list = (currentData && currentData.preorderBooksList) || [];
+  const seen = {};
+  list.forEach(b=>{
+    if(!b || b.isSeries !== "Yes" || !(b.seriesName || "").trim()) return;
+    const k = b.seriesName.trim().toLowerCase();
+    if(seen[k]) return; seen[k] = 1;
+    const grp = seriesBooksFor(b);
+    const d = seriesDiscountOf(b);
+    if(!d) return;
+    grp.forEach(x => { x.seriesDiscount = {type:d.type, value:d.value}; });
+    if(d.type === "custom") return;
+    ["paperback","hardcover"].forEach(fmt=>{
+      const r = seriesSumForFormat(b, fmt);
+      if(!r || !r.counted) return;
+      grp.forEach(x=>{
+        ensureSeriesFormats(x);
+        if(x.seriesFormats.indexOf(fmt) === -1) return;
+        const fp = x.seriesFormatPrices[fmt] = x.seriesFormatPrices[fmt] || {regular:"", soiree:""};
+        fp.regular = r.total.toFixed(2);
+        fp.soiree = (d.type === "none" || !(parseFloat(d.value) > 0)) ? "" : discountedSeriesTotal(r.total, d).toFixed(2);
+      });
+    });
+  });
 }
 
 function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
@@ -4904,6 +4994,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   const coverWrap = document.createElement('div');
   wrap.appendChild(coverWrap);
 
+  let refreshSeriesPricesHook = null;
   function renderFormatPrices(){
     pricesWrap.innerHTML = "";
     bookFormatList(book).forEach(f=>{
@@ -4917,7 +5008,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
       regI.placeholder = "e.g. 18.99";
       regI.value = fp.regular || "";
-      regI.addEventListener('input', ()=>{ fp.regular = regI.value; });
+      regI.addEventListener('input', ()=>{ fp.regular = regI.value; recomputeSeriesPrices(); if(refreshSeriesPricesHook) refreshSeriesPricesHook(); });
       regF.appendChild(regI);
       pricesWrap.appendChild(regF);
 
@@ -5074,6 +5165,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           if(info.regularPrice) book.seriesRegularPrice = info.regularPrice;
           if(info.soireePrice) book.seriesSoireePrice = info.soireePrice;
           if(info.seriesFormats) book.seriesFormats = info.seriesFormats.slice();
+          if(info.seriesDiscount) book.seriesDiscount = {type:info.seriesDiscount.type, value:info.seriesDiscount.value};
           if(info.seriesFormatPrices) book.seriesFormatPrices = JSON.parse(JSON.stringify(info.seriesFormatPrices));
           if(info.seriesHasCover) book.seriesHasCover = info.seriesHasCover;
           if(info.seriesCoverUrl) book.seriesCoverUrl = info.seriesCoverUrl;
@@ -5091,6 +5183,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         book.seriesSoireePrice = "";
         book.seriesFormats = ["paperback"];
         book.seriesFormatPrices = {};
+        book.seriesDiscount = null;
         book.seriesHasCover = "";
         book.seriesCoverUrl = "";
         book.seriesCoverUploadedAt = null;
@@ -5180,34 +5273,164 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     const seriesPricesWrap = document.createElement('div');
     seriesDetailsWrap.appendChild(seriesPricesWrap);
 
+    let editingSeriesPricing = false;
+    refreshSeriesPricesHook = () => { if(seriesPricesWrap.isConnected) renderSeriesFormatPrices(); };
+
+    function money_(n){ return "$" + (Math.round(n * 100) / 100).toFixed(2); }
+    function fmtLabel_(f){ return (SERIES_FORMAT_OPTIONS.find(o=>o.value===f) || {}).label || f; }
+
+    function seriesPricingState(){
+      const d = seriesDiscountOf(book);
+      if(d) return d;
+      // Older entries with typed-in series prices and no saved rule: keep them as typed.
+      const hasTyped = book.seriesFormats.some(f => ((book.seriesFormatPrices[f]||{}).regular || "") !== "");
+      return hasTyped ? {type:"custom", value:""} : null;
+    }
+
+    // The one-time question: how should the whole series be priced?
+    function buildSeriesPricingSetup(calcFormats){
+      const box = document.createElement('div');
+      box.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-left:4px solid var(--terracotta,#E4593F);border-radius:10px;padding:14px 16px;margin:6px 0 16px;";
+      let choice = null, mode = "percent", amtVal = "";
+      const cur = seriesDiscountOf(book);
+      if(cur && cur.type === "percent"){ choice = "discount"; mode = "percent"; amtVal = cur.value; }
+      else if(cur && cur.type === "dollar"){ choice = "discount"; mode = "dollar"; amtVal = cur.value; }
+      function mk(label, primary, fn){
+        const b = document.createElement('button');
+        b.type = "button"; b.className = "btn btn-compact " + (primary ? "btn-primary" : "btn-secondary");
+        b.style.cssText = "white-space:normal;margin:0 8px 8px 0;";
+        b.textContent = label; b.onclick = fn; return b;
+      }
+      function save(d){
+        setSeriesDiscount(book, d);
+        recomputeSeriesPrices();
+        editingSeriesPricing = false;
+        renderSeriesFormatPrices();
+      }
+      function draw(){
+        box.innerHTML = "";
+        const info = seriesSumForFormat(book, calcFormats[0]);
+        const total = info && info.counted ? info.total : null;
+        const q = document.createElement('div');
+        q.style.cssText = "line-height:1.5;margin-bottom:12px;";
+        q.innerHTML = "<strong>How would you like to price the whole series?</strong><br>"
+          + (total !== null ? `Adding up the books you've entered so far, the total is <strong>${money_(total)}</strong>. ` : "Enter this book's price above and I'll add up the series for you. ")
+          + "I'll keep this up to date as you add books to the series or change a book's price.";
+        box.appendChild(q);
+        const row = document.createElement('div');
+        row.appendChild(mk("Just add up my books", choice === "none", ()=>save({type:"none", value:""})));
+        row.appendChild(mk("Add them up, then discount the series", choice === "discount", ()=>{ choice = "discount"; draw(); }));
+        row.appendChild(mk("I'll set my own series price", false, ()=>save({type:"custom", value:""})));
+        box.appendChild(row);
+        if(choice === "discount"){
+          const t = document.createElement('div');
+          t.className = "help"; t.style.margin = "6px 0";
+          t.textContent = "Take off a percentage, or a dollar amount?";
+          box.appendChild(t);
+          const mrow = document.createElement('div');
+          mrow.appendChild(mk("% off", mode === "percent", ()=>{ mode = "percent"; draw(); }));
+          mrow.appendChild(mk("$ off", mode === "dollar", ()=>{ mode = "dollar"; draw(); }));
+          box.appendChild(mrow);
+          const inp = document.createElement('input');
+          inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+          inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amtVal;
+          inp.placeholder = mode === "percent" ? "e.g. 10" : "e.g. 5";
+          const res = document.createElement('div');
+          res.style.cssText = "font-size:14px;margin:4px 0 12px;min-height:20px;line-height:1.5;";
+          function upd(){
+            amtVal = inp.value;
+            const d = {type:mode, value:amtVal};
+            res.innerHTML = (total !== null && parseFloat(amtVal) > 0)
+              ? `With your discount, the series price is <strong>${money_(discountedSeriesTotal(total, d))}</strong> <span style="opacity:.65;">(instead of ${money_(total)})</span>`
+              : "";
+          }
+          inp.addEventListener('input', upd);
+          box.appendChild(inp); box.appendChild(res);
+          box.appendChild(mk("Save series pricing", true, ()=>{
+            if(!(parseFloat(amtVal) > 0)){ showToast("Enter how much to take off first."); return; }
+            save({type:mode, value:amtVal});
+          }));
+          upd();
+        }
+      }
+      draw();
+      return box;
+    }
+
     function renderSeriesFormatPrices(){
       seriesPricesWrap.innerHTML = "";
-      book.seriesFormats.forEach(f=>{
-        const opt = SERIES_FORMAT_OPTIONS.find(o=>o.value===f);
-        const fp = book.seriesFormatPrices[f] = book.seriesFormatPrices[f] || {regular:"", soiree:""};
+      const calcFormats = book.seriesFormats.filter(f => f === "paperback" || f === "hardcover");
+      const hasBox = book.seriesFormats.indexOf("boxSet") !== -1;
+      const st = seriesPricingState();
 
-        const regF = document.createElement('div');
-        regF.className = "field";
-        regF.innerHTML = `<label>${opt.label} series regular price</label><div class="help">The price for the whole set in this format, since attendees can buy the series as one.</div>`;
-        const regI = document.createElement('input');
-        regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
-        regI.placeholder = "e.g. 49.99";
-        regI.value = fp.regular || "";
-        regI.addEventListener('input', ()=>{ fp.regular = regI.value; });
-        regF.appendChild(regI);
-        seriesPricesWrap.appendChild(regF);
+      if(calcFormats.length){
+        if(!st || editingSeriesPricing){
+          seriesPricesWrap.appendChild(buildSeriesPricingSetup(calcFormats));
+        } else if(st.type !== "custom"){
+          // Automatic: show what the price works out to, no typing needed.
+          const sum = document.createElement('div');
+          sum.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-radius:10px;padding:14px 16px;margin:6px 0 16px;line-height:1.55;";
+          const dt = seriesDiscountText(st);
+          let html = `<strong>Series price</strong> <span style="opacity:.65;">(worked out automatically)</span><br>`;
+          calcFormats.forEach(f=>{
+            const r = seriesSumForFormat(book, f);
+            if(!r || !r.counted){ html += `${fmtLabel_(f)}: <span style="opacity:.7;">add this book's price above first</span><br>`; return; }
+            const reg = r.total, fin = discountedSeriesTotal(reg, st);
+            html += (dt && fin !== reg)
+              ? `${fmtLabel_(f)}: with the books you've entered so far, the total would be ${money_(reg)}. With your ${dt} series discount, it's <strong>${money_(fin)}</strong>.<br>`
+              : `${fmtLabel_(f)}: with the books you've entered so far, the series total is <strong>${money_(reg)}</strong>.<br>`;
+          });
+          html += `<span class="help">This updates on its own as you add books to the series or change a book's price.</span>`;
+          sum.innerHTML = html;
+          const chg = document.createElement('button');
+          chg.type = "button"; chg.className = "btn btn-secondary btn-compact";
+          chg.style.marginTop = "10px"; chg.textContent = "Change series pricing";
+          chg.onclick = () => { editingSeriesPricing = true; renderSeriesFormatPrices(); };
+          sum.appendChild(chg);
+          seriesPricesWrap.appendChild(sum);
+        } else {
+          // Author chose to type their own series price.
+          const own = document.createElement('div');
+          own.className = "help"; own.style.margin = "4px 0 10px";
+          own.innerHTML = "You're setting your own series price. ";
+          const auto = document.createElement('a');
+          auto.href = "#"; auto.textContent = "Work it out for me instead";
+          auto.onclick = (e)=>{ e.preventDefault(); editingSeriesPricing = true; renderSeriesFormatPrices(); };
+          own.appendChild(auto);
+          seriesPricesWrap.appendChild(own);
+          calcFormats.forEach(f => seriesPricesWrap.appendChild(typedSeriesPriceFields(f, true)));
+        }
+      }
+      // A box set is its own product: just a price, nothing about the series.
+      if(hasBox) seriesPricesWrap.appendChild(typedSeriesPriceFields("boxSet", false));
+    }
 
-        const soiF = document.createElement('div');
-        soiF.className = "field";
-        soiF.innerHTML = `<label>${opt.label} series Soirée price</label><div class="help">Optional — a discount on the whole set for the Soirée.</div>`;
-        const soiI = document.createElement('input');
-        soiI.type = "number"; soiI.inputMode = "decimal"; soiI.step = "0.01"; soiI.min = "0";
-        soiI.placeholder = "e.g. 42.99";
-        soiI.value = fp.soiree || "";
-        soiI.addEventListener('input', ()=>{ fp.soiree = soiI.value; });
-        soiF.appendChild(soiI);
-        seriesPricesWrap.appendChild(soiF);
-      });
+    function typedSeriesPriceFields(f, isSeriesPrice){
+      const frag = document.createElement('div');
+      const opt = SERIES_FORMAT_OPTIONS.find(o=>o.value===f);
+      const fp = book.seriesFormatPrices[f] = book.seriesFormatPrices[f] || {regular:"", soiree:""};
+      const regF = document.createElement('div');
+      regF.className = "field";
+      regF.innerHTML = `<label>${opt.label}${isSeriesPrice ? " series" : ""} regular price</label>`
+        + (isSeriesPrice ? `<div class="help">The price for the whole set in this format, since attendees can buy the series as one.</div>` : "");
+      const regI = document.createElement('input');
+      regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
+      regI.placeholder = "e.g. 49.99";
+      regI.value = fp.regular || "";
+      regI.addEventListener('input', ()=>{ fp.regular = regI.value; });
+      regF.appendChild(regI);
+      frag.appendChild(regF);
+      const soiF = document.createElement('div');
+      soiF.className = "field";
+      soiF.innerHTML = `<label>${opt.label}${isSeriesPrice ? " series" : ""} Soirée price</label><div class="help">Optional \u2014 a discount for the Soirée.</div>`;
+      const soiI = document.createElement('input');
+      soiI.type = "number"; soiI.inputMode = "decimal"; soiI.step = "0.01"; soiI.min = "0";
+      soiI.placeholder = "e.g. 42.99";
+      soiI.value = fp.soiree || "";
+      soiI.addEventListener('input', ()=>{ fp.soiree = soiI.value; });
+      soiF.appendChild(soiI);
+      frag.appendChild(soiF);
+      return frag;
     }
 
     function renderSeriesFormatCheckboxes(){
@@ -5294,7 +5517,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     book.isSeries = "No";
     book.seriesName = ""; book.seriesBookNumber = ""; book.seriesTotalBooks = "";
     book.seriesRegularPrice = ""; book.seriesSoireePrice = "";
-    book.seriesFormats = []; book.seriesFormatPrices = {};
+    book.seriesFormats = []; book.seriesFormatPrices = {}; book.seriesDiscount = null;
     book.seriesHasCover = ""; book.seriesCoverUrl = ""; book.seriesCoverUploadedAt = null;
     styleSeriesToggle();
     renderSeriesDetails();
@@ -5355,9 +5578,15 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   };
   wrap.appendChild(removeLink);
 
-  const bottomCollapseRow = makeCollapseRow();
-  bottomCollapseRow.style.marginTop = "14px";
-  wrap.appendChild(bottomCollapseRow);
+  // A clear "this is saved" moment for the author: saves, shows "Saved!",
+  // and folds the book up into the tidy collapsed row.
+  const saveBookBtn = document.createElement('button');
+  saveBookBtn.type = "button";
+  saveBookBtn.className = "btn btn-primary btn-compact";
+  saveBookBtn.style.cssText = "margin-top:18px;display:block;";
+  saveBookBtn.textContent = "Save this book";
+  saveBookBtn.onclick = collapseAndSave;
+  wrap.appendChild(saveBookBtn);
 
   return wrap;
 }
