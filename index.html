@@ -5515,6 +5515,8 @@ function buildStripeConnectSection(){
   const bodyWrap = document.createElement('div');
   wrap.appendChild(bodyWrap);
 
+  let stillMissingNote = false;
+  let justFinishedNote = false;
   function renderBody(){
     bodyWrap.innerHTML = "";
     const status = currentData.stripeOnboardingStatus || "not_started";
@@ -5530,20 +5532,22 @@ function buildStripeConnectSection(){
     btnRow.className = "btn-row";
 
     if(status === "complete"){
-      statusLine.innerHTML = `${statusIcon(true).outerHTML} <span style="margin-left:4px;">You're all set — Stripe will send your presale earnings straight to your bank account.</span>`;
+      statusLine.innerHTML = `${statusIcon(true).outerHTML} <span style="margin-left:4px;">${justFinishedNote ? "Welcome back! " : ""}You're all set — Stripe will send your presale earnings straight to your bank account.</span>`;
       statusLine.style.display = "flex";
       statusLine.style.alignItems = "center";
     } else if(status === "pending_review"){
       statusLine.textContent = "Stripe has what they need and is reviewing your info — this usually only takes a bit. Nothing else for you to do right now.";
     } else if(status === "pending"){
-      statusLine.textContent = "You've started setting up how you get paid, but haven't finished yet.";
+      statusLine.textContent = stillMissingNote
+        ? "We just checked with Stripe, and a few details are still missing. Tap the button below and Stripe will show you what's left."
+        : "You've started setting up how you get paid, but haven't finished yet.";
       const continueBtn = document.createElement('button');
       continueBtn.className = "btn btn-primary btn-compact";
       continueBtn.textContent = "Continue setting up payouts";
       continueBtn.onclick = () => startConnectOnboarding(continueBtn);
       btnRow.appendChild(continueBtn);
     } else {
-      statusLine.textContent = "To actually receive money from your presale sales, Stripe needs a few details from you (bank account, tax info). This only takes a few minutes.";
+      statusLine.textContent = "To actually receive money from your presale sales, Stripe needs a few details from you. This only takes a few minutes.";
       const startBtn = document.createElement('button');
       startBtn.className = "btn btn-primary btn-compact";
       startBtn.textContent = "Set up how I get paid";
@@ -5730,8 +5734,19 @@ function buildStripeConnectSection(){
     }
     btn.disabled = true;
     btn.textContent = "Connecting to Stripe\u2026";
+    // Keep a message on screen the WHOLE time (saving, fetching, redirecting)
+    // so there's never a blank-looking gap before Stripe opens.
+    const stripeWait = document.createElement('div');
+    stripeWait.style.cssText = "position:fixed;inset:0;z-index:2147483000;background:rgba(255,255,255,.96);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;font-family:inherit;color:#333;";
+    stripeWait.innerHTML = '<div style="width:44px;height:44px;border:4px solid #ddd;border-top-color:#6b4fbb;border-radius:50%;animation:stripeSpin 0.9s linear infinite;margin-bottom:18px"></div>'
+      + '<div style="font-size:1.15rem;font-weight:700;margin-bottom:8px">Taking you to Stripe\u2026</div>'
+      + '<div style="font-size:.95rem;max-width:300px">This can take up to 10 seconds. Please don\u2019t close or leave this screen.</div>'
+      + '<style>@keyframes stripeSpin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(stripeWait);
     try{
-      if(stripeEmail) await saveAuthorData(currentAuthor, currentData);
+      // Save the email at the same time as asking Stripe for the link (not
+      // one after the other) \u2014 saves several seconds of waiting.
+      const emailSave = stripeEmail ? saveAuthorData(currentAuthor, currentData).catch(()=>{}) : Promise.resolve();
       const res = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -5739,6 +5754,7 @@ function buildStripeConnectSection(){
       });
       const json = await res.json();
       if(json && json.needsEmail){
+        stripeWait.remove();
         btn.disabled = false;
         btn.textContent = originalText;
         return startConnectOnboarding(btn, true);
@@ -5752,10 +5768,12 @@ function buildStripeConnectSection(){
       // treats it as user-initiated and silently blocks it, which is what
       // made the button look like it just didn't do anything. Stripe sends
       // them right back to this app's URL when they're done.
+      await emailSave;
       await saveAuthorData(currentAuthor, currentData);
       window.location.href = json.url;
     }catch(e){
       console.error("Stripe onboarding error:", e);
+      stripeWait.remove();
       showToast("Couldn't start Stripe setup: " + ((e && e.message) ? e.message : "please try again"));
       btn.disabled = false;
       btn.textContent = originalText;
@@ -5781,7 +5799,35 @@ function buildStripeConnectSection(){
     }
   }
 
-  renderBody();
+  // Coming back from Stripe (or reopening the app) with setup unfinished:
+  // ask Stripe right away instead of making the author tap "Check my status".
+  const st0 = currentData.stripeOnboardingStatus || "not_started";
+  const usingStripe = (currentData.payoutMethod || "stripe") === "stripe";
+  if(usingStripe && (st0 === "pending" || st0 === "pending_review") && !window.__stripeAutoChecked){
+    window.__stripeAutoChecked = true;
+    bodyWrap.innerHTML = '<div class="help" style="display:flex;align-items:center;gap:10px;">'
+      + '<span style="width:18px;height:18px;border:3px solid #ddd;border-top-color:#6b4fbb;border-radius:50%;display:inline-block;animation:stripeSpin 0.9s linear infinite"></span>'
+      + '<span>Checking your Stripe setup\u2026</span></div>'
+      + '<style>@keyframes stripeSpin{to{transform:rotate(360deg)}}</style>';
+    (async () => {
+      try{
+        const res = await fetch(APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: JSON.stringify({ action: "refreshConnectStatus", authorName: currentAuthor })
+        });
+        const json = await res.json();
+        if(json && json.success){
+          currentData.stripeOnboardingStatus = json.status;
+          if(json.status === "complete") justFinishedNote = true;
+          else if(json.status === "pending") stillMissingNote = true;
+        }
+      }catch(e){}
+      renderBody();
+    })();
+  } else {
+    renderBody();
+  }
   return wrap;
 }
 
