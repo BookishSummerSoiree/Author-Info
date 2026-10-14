@@ -5642,7 +5642,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           return;
         }
         if(pre === "diff"){
-          q.innerHTML = "<strong>Take off a percentage, or a dollar amount?</strong>";
+          q.innerHTML = `<strong>Your current discount per book is ${br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2))}. What would you like to change it to?</strong>`;
           box.appendChild(q);
           const mrow = document.createElement('div');
           mrow.appendChild(mk("% off", mode === "percent", ()=>{ mode = "percent"; draw(); }));
@@ -5749,7 +5749,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
             const reg = r.total;
             const fin = isBooks ? seriesSumForFormat(book, f, true).total : discountedSeriesTotal(reg, st);
             html += (dt && fin !== reg)
-              ? `${fmtLabel_(f)}: with the books you've entered so far, the total would be ${money_(reg)}. With your ${dt}, it's <strong>${money_(fin)}</strong>.<br>`
+              ? `${fmtLabel_(f)}: with the books you've entered so far, the total for the series would be ${money_(reg)}. With your ${dt}, it's <strong>${money_(fin)}</strong>.<br>`
               : `${fmtLabel_(f)}: with the books you've entered so far, the series total is <strong>${money_(reg)}</strong>.<br>`;
           });
           html += `<span class="help">This updates on its own as you add books to the series or change a book's price.</span>`;
