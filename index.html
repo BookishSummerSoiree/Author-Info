@@ -5021,10 +5021,18 @@ function recomputeBookSoireePrices(){
 function seriesDiscountOf(book){
   if(book.seriesDiscount && book.seriesDiscount.type) return book.seriesDiscount;
   const sib = seriesBooksFor(book).find(b => b.seriesDiscount && b.seriesDiscount.type);
-  return sib ? sib.seriesDiscount : null;
+  if(sib) return sib.seriesDiscount;
+  // A discount the author applied to ALL their series carries over to a series that has none of its own.
+  const all = (currentData.preorderBooksList || []).find(b => b && b.seriesDiscount && b.seriesDiscount.scope === "all" && (b.seriesDiscount.type === "percent" || b.seriesDiscount.type === "dollar"));
+  return all ? all.seriesDiscount : null;
+}
+function setSeriesDiscountForAllSeries(book, d){
+  const dd = {type:d.type, value:d.value, basis:"", scope:"all"};
+  setSeriesDiscount(book, dd);
+  ((currentData && currentData.preorderBooksList) || []).forEach(b => { if(b && b.isSeries === "Yes" && (b.seriesName || "").trim()) setSeriesDiscount(b, dd); });
 }
 function setSeriesDiscount(book, d){
-  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value, basis:d.basis || ""}; });
+  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value, basis:d.basis || "", scope:d.scope || "one"}; });
 }
 function discountedSeriesTotal(total, d){
   const v = parseFloat(d && d.value);
@@ -5625,17 +5633,58 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         q.style.cssText = "line-height:1.5;margin-bottom:12px;";
         if(pre === "ask"){
           const dtxt = br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2));
-          q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special <em><u>series</u></em> discount that's different from that?`;
+          q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special <em><u>series</u></em> discount that is deeper than the discount you already set up, to help people grab the whole series?`;
           box.appendChild(q);
           const r0 = document.createElement('div');
-          r0.appendChild(mk("Yes, a different series discount", true, ()=>{ pre = "done"; draw(); }));
+          r0.appendChild(mk("Yes, a deeper series discount", true, ()=>{ pre = "diff"; draw(); }));
           r0.appendChild(mk("No, use the same discount", false, ()=>save({type:"books", value:br.value, basis:br.type})));
           box.appendChild(r0);
           return;
         }
+        if(pre === "diff"){
+          q.innerHTML = "<strong>Take off a percentage, or a dollar amount?</strong>";
+          box.appendChild(q);
+          const mrow = document.createElement('div');
+          mrow.appendChild(mk("% off", mode === "percent", ()=>{ mode = "percent"; draw(); }));
+          mrow.appendChild(mk("$ off", mode === "dollar", ()=>{ mode = "dollar"; draw(); }));
+          box.appendChild(mrow);
+          const q2 = document.createElement('div');
+          q2.style.cssText = "line-height:1.5;margin:4px 0 8px;";
+          q2.textContent = mode === "percent" ? "What percentage off would you like?" : "How many dollars off would you like?";
+          box.appendChild(q2);
+          const inp = document.createElement('input');
+          inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+          inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amtVal;
+          inp.placeholder = mode === "percent" ? "e.g. 15" : "e.g. 5";
+          const res = document.createElement('div');
+          res.style.cssText = "font-size:14px;line-height:1.55;margin:4px 0 12px;";
+          const scopeBox = document.createElement('div');
+          function updD(){
+            amtVal = inp.value;
+            const ok = parseFloat(amtVal) > 0, d = {type:mode, value:amtVal};
+            let html = "";
+            if(ok) calcFormats.forEach(f=>{
+              const r = seriesSumForFormat(book, f);
+              if(!r || !r.counted) return;
+              html += `${fmtLabel_(f)}: books added up are ${money_(r.total)}. With this series discount, it's <strong>${money_(discountedSeriesTotal(r.total, d))}</strong>.<br>`;
+            });
+            res.innerHTML = html;
+            scopeBox.innerHTML = "";
+            if(!ok) return;
+            const sq = document.createElement('div');
+            sq.style.cssText = "line-height:1.5;margin:6px 0 10px;";
+            sq.innerHTML = "Do you want this discount to apply to <em>all</em> your series? Or just this one?";
+            scopeBox.appendChild(sq);
+            scopeBox.appendChild(mk("All my series", true, ()=>{ setSeriesDiscountForAllSeries(book, d); recomputeSeriesPrices(); editingSeriesPricing = false; renderSeriesFormatPrices(); }));
+            scopeBox.appendChild(mk("Just this one", true, ()=>save({type:mode, value:amtVal})));
+          }
+          inp.addEventListener('input', updD);
+          box.appendChild(inp); box.appendChild(res); box.appendChild(scopeBox);
+          updD();
+          return;
+        }
         q.innerHTML = "<strong>How would you like to price the whole series?</strong><br>"
-          + (total !== null ? `Adding up the books you've entered so far, the total is <strong>${money_(total)}</strong>. ` : "Enter this book's price above and I'll add up the series for you. ")
-          + "I'll keep this up to date as you add books to the series or change a book's price.";
+          + (total !== null ? `Adding up the books you've entered so far, the total is <strong>${money_(total)}</strong> (but this will automatically update if/when you add more books to the series).` : "Enter this book's price above and I'll add up the series for you (and it will automatically update if/when you add more books to the series).");
         box.appendChild(q);
         const row = document.createElement('div');
         row.appendChild(mk("Just add up my books", choice === "none", ()=>save({type:"none", value:""})));
@@ -5901,6 +5950,41 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   // Tag line + blurb sit right under the prices, above the cover section.
   wrap.insertBefore(tagLineField, sameCoverField);
   wrap.insertBefore(blurbField, sameCoverField);
+
+  // Save buttons at the bottom of every open book.
+  const saveRow = document.createElement('div');
+  saveRow.className = "btn-row";
+  saveRow.style.cssText = "margin-top:14px;";
+  const saveBookBtn = document.createElement('button');
+  saveBookBtn.type = "button";
+  saveBookBtn.className = "btn btn-primary btn-compact";
+  saveBookBtn.textContent = "Save";
+  saveBookBtn.onclick = () => {
+    if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
+    collapseAndSave();
+  };
+  const saveAddBtn = document.createElement('button');
+  saveAddBtn.type = "button";
+  saveAddBtn.className = "btn btn-secondary btn-compact";
+  saveAddBtn.textContent = "Save and add another book";
+  saveAddBtn.onclick = async () => {
+    if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
+    await saveAuthorData(currentAuthor, currentData);
+    showToast("Saved!");
+    currentData.preorderBooksList.forEach(b => { b._expanded = false; });
+    const nb = emptyPreorderBook();
+    currentData.preorderBooksList.push(nb);
+    onChange();
+    requestAnimationFrame(()=>{
+      const el = document.querySelector(`[data-book-entry-id="${nb.id}"]`);
+      if(el) el.scrollIntoView({block:"start", behavior:"smooth"});
+      const ti = document.querySelector(`[data-preorder-title-for="${nb.id}"]`);
+      if(ti) ti.focus({preventScroll:true});
+    });
+  };
+  saveRow.appendChild(saveBookBtn);
+  saveRow.appendChild(saveAddBtn);
+  wrap.appendChild(saveRow);
 
   const removeLink = document.createElement('div');
   removeLink.className = "home-link";
