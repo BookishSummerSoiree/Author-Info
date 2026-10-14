@@ -4202,12 +4202,12 @@ function emptyPreorderBook(){
 const BOOK_FORMAT_OPTIONS = [
   {value:"paperback", label:"Paperback"},
   {value:"hardcover", label:"Hardcover"},
-  {value:"specialEdition", label:"Special Edition"}
+  {value:"specialEdition", label:"Special Edition"},
+  {value:"boxSet", label:"Box Set"}
 ];
 const SERIES_FORMAT_OPTIONS = [
   {value:"paperback", label:"Paperback"},
-  {value:"hardcover", label:"Hardcover"},
-  {value:"boxSet", label:"Box Set"}
+  {value:"hardcover", label:"Hardcover"}
 ];
 
 function ensureBookFormats(book){
@@ -4255,6 +4255,11 @@ function bookHasAllPrices(book){
 }
 
 function ensureSeriesFormats(book){
+  // A box set is a series in itself, so it is never a format *of* a series.
+  if(Array.isArray(book.seriesFormats) && book.seriesFormats.indexOf("boxSet") !== -1){
+    book.seriesFormats = book.seriesFormats.filter(f => f !== "boxSet");
+    if(book.seriesFormatPrices) delete book.seriesFormatPrices.boxSet;
+  }
   if(!Array.isArray(book.seriesFormats) || book.seriesFormats.length === 0){
     book.seriesFormats = ["paperback"];
     book.seriesFormatPrices = book.seriesFormatPrices || {};
@@ -4828,6 +4833,22 @@ function getSeriesInfo(name, currentBook){
    Sums the regular prices of every book entered so far in the same series,
    for one format ("paperback" / "hardcover"). A Box Set has no per-book
    equivalent, so it can't be added up. */
+// A series can only be sold in a format the book itself comes in.
+function seriesFormatChoices(book){
+  ensureBookFormats(book);
+  const avail = ["paperback","hardcover"].filter(f => book.formats.indexOf(f) !== -1);
+  return avail.length ? avail : ["paperback"];
+}
+function syncSeriesFormatsToBook(book){
+  const avail = seriesFormatChoices(book);
+  let cur = (Array.isArray(book.seriesFormats) ? book.seriesFormats : []).filter(f => avail.indexOf(f) !== -1);
+  if(avail.length === 1 || !cur.length) cur = avail.slice();
+  book.seriesFormats = cur;
+  book.seriesFormatPrices = book.seriesFormatPrices || {};
+  Object.keys(book.seriesFormatPrices).forEach(f => { if(cur.indexOf(f) === -1) delete book.seriesFormatPrices[f]; });
+  cur.forEach(f => { if(!book.seriesFormatPrices[f]) book.seriesFormatPrices[f] = {regular:"", soiree:""}; });
+  return avail;
+}
 function seriesBooksFor(book){
   const name = (book.seriesName || "").trim().toLowerCase();
   if(!name) return [book];
@@ -5094,6 +5115,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         renderFormatPrices();
         renderSameCoverQuestion();
         renderCovers();
+        applyBoxSetRule();
       });
       lbl.appendChild(cb);
       lbl.appendChild(document.createTextNode(opt.label));
@@ -5264,11 +5286,12 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     ensureSeriesFormats(book);
     const seriesFormatsField = document.createElement('div');
     seriesFormatsField.className = "field";
-    seriesFormatsField.innerHTML = `<label>What formats does this series come in?</label>`;
+    seriesFormatsField.innerHTML = `<label>Which formats is the whole series available in?</label>`;
     const seriesFormatsRow = document.createElement('div');
     seriesFormatsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;";
     seriesFormatsField.appendChild(seriesFormatsRow);
-    seriesDetailsWrap.appendChild(seriesFormatsField);
+    const seriesFormatChoicesNow = syncSeriesFormatsToBook(book);
+    if(seriesFormatChoicesNow.length > 1) seriesDetailsWrap.appendChild(seriesFormatsField);
 
     const seriesPricesWrap = document.createElement('div');
     seriesDetailsWrap.appendChild(seriesPricesWrap);
@@ -5360,7 +5383,6 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     function renderSeriesFormatPrices(){
       seriesPricesWrap.innerHTML = "";
       const calcFormats = book.seriesFormats.filter(f => f === "paperback" || f === "hardcover");
-      const hasBox = book.seriesFormats.indexOf("boxSet") !== -1;
       const st = seriesPricingState();
 
       if(calcFormats.length){
@@ -5401,8 +5423,6 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           calcFormats.forEach(f => seriesPricesWrap.appendChild(typedSeriesPriceFields(f, true)));
         }
       }
-      // A box set is its own product: just a price, nothing about the series.
-      if(hasBox) seriesPricesWrap.appendChild(typedSeriesPriceFields("boxSet", false));
     }
 
     function typedSeriesPriceFields(f, isSeriesPrice){
@@ -5435,7 +5455,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
     function renderSeriesFormatCheckboxes(){
       seriesFormatsRow.innerHTML = "";
-      SERIES_FORMAT_OPTIONS.forEach(opt=>{
+      SERIES_FORMAT_OPTIONS.filter(o => seriesFormatChoices(book).indexOf(o.value) !== -1).forEach(opt=>{
         const lbl = document.createElement('label');
         lbl.style.cssText = "display:flex;align-items:center;gap:6px;font-family:'Lora',serif;font-size:14px;cursor:pointer;";
         const cb = document.createElement('input');
@@ -5525,6 +5545,16 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   styleSeriesToggle();
   renderSeriesDetails();
 
+  // A box set is a series in itself, so it is never "part of a series":
+  // the whole series question disappears when Box Set is ticked.
+  function applyBoxSetRule(){
+    const isBox = book.formats.indexOf("boxSet") !== -1;
+    if(!isBox && book.isSeries === "Yes") renderSeriesDetails();
+    seriesField.style.display = isBox ? "none" : "";
+    if(isBox && book.isSeries){ seriesNoBtn.onclick(); }
+  }
+  applyBoxSetRule();
+
   const tagLineField = document.createElement('div');
   tagLineField.className = "field";
   tagLineField.innerHTML = `<label>Tag Line <span style="font-weight:400;opacity:.6;">(optional)</span></label>`;
@@ -5567,6 +5597,10 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   blurbField.appendChild(blurbTa);
   wrap.appendChild(blurbField);
 
+  // Tag line + blurb sit right under the prices, above the cover section.
+  wrap.insertBefore(tagLineField, sameCoverField);
+  wrap.insertBefore(blurbField, sameCoverField);
+
   const removeLink = document.createElement('div');
   removeLink.className = "home-link";
   removeLink.style.cssText = "color:var(--terracotta,#E4593F);margin-top:4px;";
@@ -5578,15 +5612,9 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   };
   wrap.appendChild(removeLink);
 
-  // A clear "this is saved" moment for the author: saves, shows "Saved!",
-  // and folds the book up into the tidy collapsed row.
-  const saveBookBtn = document.createElement('button');
-  saveBookBtn.type = "button";
-  saveBookBtn.className = "btn btn-primary btn-compact";
-  saveBookBtn.style.cssText = "margin-top:18px;display:block;";
-  saveBookBtn.textContent = "Save this book";
-  saveBookBtn.onclick = collapseAndSave;
-  wrap.appendChild(saveBookBtn);
+  const bottomCollapseRow = makeCollapseRow();
+  bottomCollapseRow.style.marginTop = "14px";
+  wrap.appendChild(bottomCollapseRow);
 
   return wrap;
 }
