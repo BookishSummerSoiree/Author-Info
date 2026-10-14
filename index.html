@@ -4182,7 +4182,7 @@ function renderSellingTitles(step){
 
 /* ---------- SCREEN: PREORDER BOOKS (custom) ---------- */
 function emptyPreorderBook(){
-  return {
+  const nb = {
     id: 'pb_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8),
     title: "", regularPrice: "", soireePrice: "", tagLine: "", blurb: "",
     coverUrl: "", coverUploadedAt: null,
@@ -4190,6 +4190,9 @@ function emptyPreorderBook(){
     seriesRegularPrice: "", seriesSoireePrice: "",
     _expanded: true
   };
+  // If the author said "use this Soirée discount for all my books", new books start with it.
+  try{ const d = defaultSoireeRule(); if(d) nb.soireeDiscount = {type:d.type, value:d.value, scope:"all"}; }catch(e){}
+  return nb;
 }
 
 /* ---- Format variants (paperback/hardcover/special edition for a single
@@ -4484,6 +4487,7 @@ function renderPreorderBooks(step){
     currentData.preorderBooksList = currentData.preorderBooksList.filter(b => b && b.title && b.title.trim());
     currentData.preorderBooksList.forEach(b => { b._expanded = false; });
   }
+  try{ recomputeSeriesPrices(); }catch(e){}
   // Backfill ids/expansion state for any books saved before this existed.
   // A lone book starts expanded (nothing to collapse yet); multiple books
   // start collapsed so the screen doesn't open crazy-long.
@@ -4542,6 +4546,22 @@ function renderPreorderBooks(step){
       render();
     };
     entriesWrap.appendChild(previewLink);
+
+    // Opens the live storefront in a NEW tab so this page stays right where
+    // it was; closing (or swiping back from) that tab returns here. Saves
+    // first so the storefront shows the latest changes.
+    const storeLink = document.createElement('button');
+    storeLink.type = "button";
+    storeLink.className = "btn btn-secondary btn-tiny";
+    storeLink.style.cssText = "margin-top:6px;margin-left:10px;";
+    storeLink.textContent = "See the Soirée Storefront";
+    storeLink.onclick = async () => {
+      const w = window.open("", "_blank");
+      try{ await saveAuthorData(currentAuthor, currentData); }catch(e){}
+      const url = "https://bookishsummersoiree.github.io/BSS-Storefront/";
+      if(w){ w.location.href = url; } else { window.open(url, "_blank"); }
+    };
+    entriesWrap.appendChild(storeLink);
   }
 
   renderEntries();
@@ -4855,18 +4875,24 @@ function seriesBooksFor(book){
   return (currentData.preorderBooksList || []).filter(b =>
     b && b.isSeries === "Yes" && (b.seriesName || "").trim().toLowerCase() === name);
 }
-function seriesSumForFormat(book, fmt){
+function seriesSumForFormat(book, fmt, useSoiree){
   if(fmt !== "paperback" && fmt !== "hardcover") return null;
   const books = seriesBooksFor(book);
   let total = 0, counted = 0;
+  function pick(b, f){
+    const fp = (b.formatPrices || {})[f] || {};
+    const r = parseFloat(fp.regular);
+    if(isNaN(r)) return NaN;
+    if(useSoiree){ const so = parseFloat(fp.soiree); if(fp.soiree !== "" && !isNaN(so)) return so; }
+    return r;
+  }
   books.forEach(b=>{
     ensureBookFormats(b);
-    let fp = b.formatPrices[fmt];
-    let v = fp ? parseFloat(fp.regular) : NaN;
+    let v = pick(b, fmt);
     if(isNaN(v)){
       // book doesn't come in that format: use its own first listed price
       for(let i=0;i<b.formats.length;i++){
-        const alt = parseFloat((b.formatPrices[b.formats[i]] || {}).regular);
+        const alt = pick(b, b.formats[i]);
         if(!isNaN(alt)){ v = alt; break; }
       }
     }
@@ -4875,13 +4901,51 @@ function seriesSumForFormat(book, fmt){
   return { total: Math.round(total * 100) / 100, counted: counted, entered: books.length };
 }
 
+/* ---- Soirée discount rule for a single book ----
+   book.soireeDiscount = {type:"percent"|"dollar"|"none"|"manual", value, scope:"all"|"each"} */
+function bookRuleOf(book){
+  if(book.soireeDiscount && book.soireeDiscount.type) return book.soireeDiscount;
+  ensureBookFormats(book);
+  const typed = (book.formats || []).some(f => ((book.formatPrices[f] || {}).soiree || "") !== "");
+  return typed ? {type:"manual", value:"", scope:"each"} : null;
+}
+function defaultSoireeRule(){
+  const l = (currentData && currentData.preorderBooksList) || [];
+  const b = l.find(x => x && x.soireeDiscount && x.soireeDiscount.scope === "all"
+    && (x.soireeDiscount.type === "percent" || x.soireeDiscount.type === "dollar"));
+  return b ? b.soireeDiscount : null;
+}
+function applySoireeRule(book, rule, scope){
+  const r = {type:rule.type, value:rule.value, scope:scope};
+  if(scope === "all"){
+    ((currentData && currentData.preorderBooksList) || []).forEach(b => { if(b) b.soireeDiscount = {type:r.type, value:r.value, scope:"all"}; });
+  }
+  book.soireeDiscount = r;
+  recomputeSeriesPrices();
+}
+function recomputeBookSoireePrices(){
+  const list = (currentData && currentData.preorderBooksList) || [];
+  list.forEach(b=>{
+    if(!b) return;
+    const r = b.soireeDiscount;
+    if(!r || !r.type || r.type === "manual") return;
+    ensureBookFormats(b);
+    b.formats.forEach(f=>{
+      const fp = bookFormatPrice(b, f);
+      const reg = parseFloat(fp.regular);
+      if(isNaN(reg) || r.type === "none"){ fp.soiree = ""; return; }
+      fp.soiree = discountedSeriesTotal(reg, r) === reg ? "" : discountedSeriesTotal(reg, r).toFixed(2);
+    });
+  });
+}
+
 function seriesDiscountOf(book){
   if(book.seriesDiscount && book.seriesDiscount.type) return book.seriesDiscount;
   const sib = seriesBooksFor(book).find(b => b.seriesDiscount && b.seriesDiscount.type);
   return sib ? sib.seriesDiscount : null;
 }
 function setSeriesDiscount(book, d){
-  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value}; });
+  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value, basis:d.basis || ""}; });
 }
 function discountedSeriesTotal(total, d){
   const v = parseFloat(d && d.value);
@@ -4899,6 +4963,7 @@ function seriesDiscountText(d){
 // save and whenever a book's price changes. Series set to "custom" (the
 // author typed their own price) are left alone.
 function recomputeSeriesPrices(){
+  recomputeBookSoireePrices();
   const list = (currentData && currentData.preorderBooksList) || [];
   const seen = {};
   list.forEach(b=>{
@@ -4908,17 +4973,29 @@ function recomputeSeriesPrices(){
     const grp = seriesBooksFor(b);
     const d = seriesDiscountOf(b);
     if(!d) return;
-    grp.forEach(x => { x.seriesDiscount = {type:d.type, value:d.value}; });
+    let rule = null;
+    if(d.type === "books"){
+      rule = grp.map(x => x.soireeDiscount).find(r => r && (r.type === "percent" || r.type === "dollar")) || null;
+      d.value = rule ? rule.value : ""; d.basis = rule ? rule.type : "";
+    }
+    grp.forEach(x => { x.seriesDiscount = {type:d.type, value:d.value, basis:d.basis || ""}; });
     if(d.type === "custom") return;
     ["paperback","hardcover"].forEach(fmt=>{
       const r = seriesSumForFormat(b, fmt);
       if(!r || !r.counted) return;
+      let soi = "";
+      if(d.type === "books"){
+        const rs = seriesSumForFormat(b, fmt, true);
+        soi = (rule && rs && rs.total < r.total) ? rs.total.toFixed(2) : "";
+      } else if(d.type !== "none" && parseFloat(d.value) > 0){
+        soi = discountedSeriesTotal(r.total, d).toFixed(2);
+      }
       grp.forEach(x=>{
         ensureSeriesFormats(x);
         if(x.seriesFormats.indexOf(fmt) === -1) return;
         const fp = x.seriesFormatPrices[fmt] = x.seriesFormatPrices[fmt] || {regular:"", soiree:""};
         fp.regular = r.total.toFixed(2);
-        fp.soiree = (d.type === "none" || !(parseFloat(d.value) > 0)) ? "" : discountedSeriesTotal(r.total, d).toFixed(2);
+        fp.soiree = soi;
       });
     });
   });
@@ -5007,6 +5084,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
   const pricesWrap = document.createElement('div');
   wrap.appendChild(pricesWrap);
+  const soireeWrap = document.createElement('div');
+  wrap.appendChild(soireeWrap);
 
   const sameCoverField = document.createElement('div');
   sameCoverField.className = "field";
@@ -5016,6 +5095,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   wrap.appendChild(coverWrap);
 
   let refreshSeriesPricesHook = null;
+  let refreshSoireeHook = null;
+  let soireeEditing = false;
   function renderFormatPrices(){
     pricesWrap.innerHTML = "";
     bookFormatList(book).forEach(f=>{
@@ -5029,21 +5110,133 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       regI.type = "number"; regI.inputMode = "decimal"; regI.step = "0.01"; regI.min = "0";
       regI.placeholder = "e.g. 18.99";
       regI.value = fp.regular || "";
-      regI.addEventListener('input', ()=>{ fp.regular = regI.value; recomputeSeriesPrices(); if(refreshSeriesPricesHook) refreshSeriesPricesHook(); });
+      regI.addEventListener('input', ()=>{ fp.regular = regI.value; recomputeSeriesPrices(); if(refreshSeriesPricesHook) refreshSeriesPricesHook(); if(refreshSoireeHook) refreshSoireeHook(); });
       regF.appendChild(regI);
       pricesWrap.appendChild(regF);
 
-      const soiF = document.createElement('div');
-      soiF.className = "field";
-      soiF.innerHTML = `<label>${opt.label} Soirée price</label><div class="help">Optional — a small discount here is a great incentive to buy! Leave blank and the regular price shows instead.</div>`;
-      const soiI = document.createElement('input');
-      soiI.type = "number"; soiI.inputMode = "decimal"; soiI.step = "0.01"; soiI.min = "0";
-      soiI.placeholder = "e.g. 15.99";
-      soiI.value = fp.soiree || "";
-      soiI.addEventListener('input', ()=>{ fp.soiree = soiI.value; });
-      soiF.appendChild(soiI);
-      pricesWrap.appendChild(soiF);
     });
+    renderSoireeBlock();
+  }
+
+  function renderSoireeBlock(){
+    soireeWrap.innerHTML = "";
+    const box = document.createElement('div');
+    box.className = "field";
+    box.innerHTML = `<label>Soirée pricing</label>`;
+    soireeWrap.appendChild(box);
+    const rule = bookRuleOf(book);
+    const fmtName = f => (BOOK_FORMAT_OPTIONS.find(o=>o.value===f) || {}).label || f;
+    const money_ = n => "$" + (Math.round(n * 100) / 100).toFixed(2);
+    function mk(label, primary, fn){
+      const b = document.createElement('button');
+      b.type = "button"; b.className = "btn btn-compact " + (primary ? "btn-primary" : "btn-secondary");
+      b.style.cssText = "white-space:normal;margin:0 8px 8px 0;";
+      b.textContent = label; b.onclick = fn; return b;
+    }
+    refreshSoireeHook = () => { if(soireeWrap.isConnected && !soireeEditing && bookRuleOf(book)) renderSoireeBlock(); };
+
+    if(rule && rule.type === "manual" && !soireeEditing){
+      const help = document.createElement('div');
+      help.className = "help"; help.style.marginBottom = "8px";
+      help.innerHTML = "Optional \u2014 leave blank and the regular price shows instead. ";
+      const auto = document.createElement('a');
+      auto.href = "#"; auto.textContent = "Work it out for me instead";
+      auto.onclick = (e)=>{ e.preventDefault(); soireeEditing = true; renderSoireeBlock(); };
+      help.appendChild(auto);
+      box.appendChild(help);
+      bookFormatList(book).forEach(f=>{
+        const fp = bookFormatPrice(book, f);
+        const lab = document.createElement('div');
+        lab.style.cssText = "font-size:13px;margin:6px 0 2px;";
+        lab.textContent = fmtName(f) + " Soirée price";
+        const inp = document.createElement('input');
+        inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+        inp.placeholder = "e.g. 15.99"; inp.value = fp.soiree || "";
+        inp.addEventListener('input', ()=>{ fp.soiree = inp.value; });
+        box.appendChild(lab); box.appendChild(inp);
+      });
+      return;
+    }
+
+    if(rule && !soireeEditing){
+      const sum = document.createElement('div');
+      sum.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-radius:10px;padding:14px 16px;line-height:1.55;";
+      const dt = seriesDiscountText(rule);
+      let html = "";
+      bookFormatList(book).forEach(f=>{
+        const reg = parseFloat(bookFormatPrice(book, f).regular);
+        if(isNaN(reg)){ html += `${fmtName(f)}: <span style="opacity:.7;">add the regular price above first</span><br>`; return; }
+        const fin = rule.type === "none" ? reg : discountedSeriesTotal(reg, rule);
+        html += (rule.type !== "none" && fin !== reg)
+          ? `${fmtName(f)}: regular price ${money_(reg)}. With your ${dt} Soirée discount, it's <strong>${money_(fin)}</strong>.<br>`
+          : `${fmtName(f)}: <strong>${money_(reg)}</strong> (no Soirée discount).<br>`;
+      });
+      if(rule.type !== "none") html += `<span class="help">This updates on its own if you change the price.${rule.scope === "all" ? " The same discount applies to all your books." : ""}</span>`;
+      sum.innerHTML = html;
+      const chg = mk("Change Soirée pricing", false, ()=>{ soireeEditing = true; renderSoireeBlock(); });
+      chg.style.marginTop = "10px";
+      sum.appendChild(chg);
+      box.appendChild(sum);
+      return;
+    }
+
+    // ---- setup conversation ----
+    let step = "ask", kind = "percent", amt = "";
+    const panel = document.createElement('div');
+    panel.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-left:4px solid var(--terracotta,#E4593F);border-radius:10px;padding:14px 16px;";
+    box.appendChild(panel);
+    function firstReg(){
+      const fs = bookFormatList(book);
+      for(let i=0;i<fs.length;i++){ const r = parseFloat(bookFormatPrice(book, fs[i]).regular); if(!isNaN(r)) return r; }
+      return null;
+    }
+    function done(rule2, scope){
+      soireeEditing = false;
+      applySoireeRule(book, rule2, scope);
+      renderSoireeBlock();
+      if(refreshSeriesPricesHook) refreshSeriesPricesHook();
+    }
+    function draw(){
+      panel.innerHTML = "";
+      const q = document.createElement('div');
+      q.style.cssText = "line-height:1.5;margin-bottom:12px;";
+      const btns = document.createElement('div');
+      if(step === "ask"){
+        q.textContent = "Do you want special Soirée pricing for this book, to give people a nudge to grab it?";
+        btns.appendChild(mk("Yes", true, ()=>{ step = "kind"; draw(); }));
+        btns.appendChild(mk("No", false, ()=>done({type:"none", value:""}, "each")));
+        btns.appendChild(mk("I'll type my own Soirée price", false, ()=>{ soireeEditing = false; book.soireeDiscount = {type:"manual", value:"", scope:"each"}; renderSoireeBlock(); }));
+      } else if(step === "kind"){
+        q.textContent = "Do you want it to be a specific dollar amount off, or a percentage off?";
+        btns.appendChild(mk("$ off", true, ()=>{ kind = "dollar"; step = "amount"; draw(); }));
+        btns.appendChild(mk("% off", true, ()=>{ kind = "percent"; step = "amount"; draw(); }));
+      } else if(step === "amount"){
+        q.textContent = kind === "percent" ? "What percentage off would you like?" : "How many dollars off would you like?";
+        const inp = document.createElement('input');
+        inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+        inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amt;
+        inp.placeholder = kind === "percent" ? "e.g. 10" : "e.g. 2";
+        const res = document.createElement('div');
+        res.style.cssText = "font-size:14px;margin:4px 0 12px;min-height:20px;";
+        function upd(){
+          amt = inp.value;
+          const reg = firstReg();
+          res.innerHTML = (reg !== null && parseFloat(amt) > 0)
+            ? `That makes the Soirée price <strong>${money_(discountedSeriesTotal(reg, {type:kind, value:amt}))}</strong> <span style="opacity:.65;">(instead of ${money_(reg)})</span>` : "";
+        }
+        inp.addEventListener('input', upd);
+        btns.appendChild(inp); btns.appendChild(res);
+        btns.appendChild(mk("Next", true, ()=>{ if(!(parseFloat(amt) > 0)){ showToast("Enter how much to take off first."); return; } step = "scope"; draw(); }));
+        btns.appendChild(mk("\u2190 Back", false, ()=>{ step = "kind"; draw(); }));
+        upd();
+      } else if(step === "scope"){
+        q.textContent = "Do you want this same discount applied to all your books, or would you rather decide with each book you enter?";
+        btns.appendChild(mk("Same discount for all my books", true, ()=>done({type:kind, value:amt}, "all")));
+        btns.appendChild(mk("I'll decide with each book", true, ()=>done({type:kind, value:amt}, "each")));
+      }
+      panel.appendChild(q); panel.appendChild(btns);
+    }
+    draw();
   }
 
   function renderSameCoverQuestion(){
@@ -5187,7 +5380,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           if(info.regularPrice) book.seriesRegularPrice = info.regularPrice;
           if(info.soireePrice) book.seriesSoireePrice = info.soireePrice;
           if(info.seriesFormats) book.seriesFormats = info.seriesFormats.slice();
-          if(info.seriesDiscount) book.seriesDiscount = {type:info.seriesDiscount.type, value:info.seriesDiscount.value};
+          if(info.seriesDiscount) book.seriesDiscount = JSON.parse(JSON.stringify(info.seriesDiscount));
           if(info.seriesFormatPrices) book.seriesFormatPrices = JSON.parse(JSON.stringify(info.seriesFormatPrices));
           if(info.seriesHasCover) book.seriesHasCover = info.seriesHasCover;
           if(info.seriesCoverUrl) book.seriesCoverUrl = info.seriesCoverUrl;
@@ -5316,6 +5509,9 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       box.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-left:4px solid var(--terracotta,#E4593F);border-radius:10px;padding:14px 16px;margin:6px 0 16px;";
       let choice = null, mode = "percent", amtVal = "";
       const cur = seriesDiscountOf(book);
+      const br = book.soireeDiscount;
+      const brOk = br && (br.type === "percent" || br.type === "dollar");
+      let pre = (brOk && !cur) ? "ask" : "done";
       if(cur && cur.type === "percent"){ choice = "discount"; mode = "percent"; amtVal = cur.value; }
       else if(cur && cur.type === "dollar"){ choice = "discount"; mode = "dollar"; amtVal = cur.value; }
       function mk(label, primary, fn){
@@ -5336,6 +5532,16 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         const total = info && info.counted ? info.total : null;
         const q = document.createElement('div');
         q.style.cssText = "line-height:1.5;margin-bottom:12px;";
+        if(pre === "ask"){
+          const dtxt = br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2));
+          q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special series discount that's different from that?`;
+          box.appendChild(q);
+          const r0 = document.createElement('div');
+          r0.appendChild(mk("Yes, a different series discount", true, ()=>{ pre = "done"; draw(); }));
+          r0.appendChild(mk("No, use the same discount", false, ()=>save({type:"books", value:br.value, basis:br.type})));
+          box.appendChild(r0);
+          return;
+        }
         q.innerHTML = "<strong>How would you like to price the whole series?</strong><br>"
           + (total !== null ? `Adding up the books you've entered so far, the total is <strong>${money_(total)}</strong>. ` : "Enter this book's price above and I'll add up the series for you. ")
           + "I'll keep this up to date as you add books to the series or change a book's price.";
@@ -5392,14 +5598,18 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           // Automatic: show what the price works out to, no typing needed.
           const sum = document.createElement('div');
           sum.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-radius:10px;padding:14px 16px;margin:6px 0 16px;line-height:1.55;";
-          const dt = seriesDiscountText(st);
+          const isBooks = st.type === "books";
+          const dt = isBooks
+            ? (st.basis === "percent" ? (st.value + "% Soirée discount") : (st.basis === "dollar" ? ("$" + parseFloat(st.value).toFixed(2) + " Soirée discount on each book") : ""))
+            : (seriesDiscountText(st) ? seriesDiscountText(st) + " series discount" : "");
           let html = `<strong>Series price</strong> <span style="opacity:.65;">(worked out automatically)</span><br>`;
           calcFormats.forEach(f=>{
             const r = seriesSumForFormat(book, f);
             if(!r || !r.counted){ html += `${fmtLabel_(f)}: <span style="opacity:.7;">add this book's price above first</span><br>`; return; }
-            const reg = r.total, fin = discountedSeriesTotal(reg, st);
+            const reg = r.total;
+            const fin = isBooks ? seriesSumForFormat(book, f, true).total : discountedSeriesTotal(reg, st);
             html += (dt && fin !== reg)
-              ? `${fmtLabel_(f)}: with the books you've entered so far, the total would be ${money_(reg)}. With your ${dt} series discount, it's <strong>${money_(fin)}</strong>.<br>`
+              ? `${fmtLabel_(f)}: with the books you've entered so far, the total would be ${money_(reg)}. With your ${dt}, it's <strong>${money_(fin)}</strong>.<br>`
               : `${fmtLabel_(f)}: with the books you've entered so far, the series total is <strong>${money_(reg)}</strong>.<br>`;
           });
           html += `<span class="help">This updates on its own as you add books to the series or change a book's price.</span>`;
