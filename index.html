@@ -7882,7 +7882,7 @@ function renderField(f){
         b.onclick = () => { setLinkStatus(f.key, linkStatusOf(f.key) === val ? "" : val); paint(); };
         return b;
       };
-      const laterB = mkb("I have this, but I'll come back to fill it in", "later");
+      const laterB = mkb("I have this, but I'll come back to fill it in later", "later");
       const noneB = mkb("I don't have this", "none");
       function paint(){
         [laterB, noneB].forEach(b => {
