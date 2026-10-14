@@ -1017,7 +1017,7 @@ const GRAPHICS = [
 ];
 
 const DROPOFF_ADDRESSES = [
-  {value:"Take it to Lynette", prefix:"I will drop off my swag &/or prizes by May 1 to:", who:"Lynette Baird", handle:"@toryhooked", addr:"507 N Pinnacle Ln, Saratoga Springs, UT"},
+  {value:"Take it to Lynette", prefix:"I will drop off my swag &/or prizes by May 1 to:", who:"Lynette Baird", handle:"@storyhooked", addr:"507 N Pinnacle Ln, Saratoga Springs, UT"},
   {value:"Take it to Nicole", prefix:"I will drop off my swag &/or prizes by May 1 to:", who:"Nicole Kimzey", handle:null, addr:"496 E Kays Cir, Washington, UT"},
   {value:"Mail it to Nicole", prefix:"I will mail my swag &/or prizes so they'll arrive by May 1 to:", who:"Nicole Kimzey", handle:null, addr:"496 E Kays Cir, Washington, UT 84780"}
 ];
@@ -2086,12 +2086,12 @@ function renderHome(){
   const declinedDonating = currentData.prizesPlan === "I'll pass on donating prizes.";
 
   const items = [
+    {label:"My To-Do List", action: () => { whatsLeftScrollY = null; currentScreen="whats-left"; render(); }},
     {label:"See the welcome message again", action: () => { currentScreen="welcome"; app.innerHTML=""; renderWelcome(true); window.scrollTo(0,0); }},
     {label:"Remind me of the dates & times to put in my calendar", action: () => { currentScreen="dates"; render(); }},
     {label:"Continue where I left off", action: () => continueWhereLeftOff()},
     {label:"Go to a specific section in the app", action: () => { currentScreen="nav-submenu"; render(); }},
-    {label:"My To-Do List", action: () => { whatsLeftScrollY = null; currentScreen="whats-left"; render(); }},
-    {label:"Preselling books", action: () => { currentScreen="preorder-status"; render(); }},
+    {label:"Presale book options", action: () => { currentScreen="preorder-status"; render(); }},
     {label:"All presale orders", action: () => { presaleOrdersState.lines = null; presaleOrdersState.error = ""; currentScreen="presale-orders"; render(); }},
     {label:"Preview my QR code sheet", action: () => { currentScreen="qr-preview"; render(); }},
     {label:"List of book(s) I said I was selling at the Soirée",
@@ -4445,7 +4445,7 @@ function renderPreorderBooks(step){
     <div class="help" style="margin-top:10px;line-height:1.5;">
       It's going to be easier than ever for attendees to preorder your books!<br><br>
       <strong>What it will look like for attendees:</strong> All books available for preorder will be in one place. No more needing to go in and out of each preorder form. They can look at all available books, or search by author or book title. It will be like a mini-amazon shopping experience: One cart. One transaction. All the authors.<br><br>
-      <strong>What it will look like for you:</strong> You will upload your title, cover, blurb, and price. You'll get email updates as your books sell, and you can check your sales anytime from your personalized Home Screen right here in this app. Payments are sent to your Stripe account automatically with every sale — you choose whether Stripe pays out to your bank weekly, daily, or monthly, right from your own Stripe dashboard. So you don't have to keep track of who has paid, or worry about collecting money.<br><br>
+      <strong>What it will look like for you:</strong> You will upload your title, cover, blurb, and price. You'll get an email for every order, and you can check your sales anytime from your personalized Home Screen right here in this app. You choose how you're paid: <strong>Stripe</strong> (paid straight into your own Stripe account, and you decide whether payouts happen daily, weekly, or monthly) or <strong>Venmo</strong> (the money goes into the Soirée Stripe account, and Nicole sends you a Venmo within about two weeks). Either way, you don't have to keep track of who has paid, or worry about collecting money.<br><br>
       If you have an unpublished book that will be available by the Soirée, be sure to include it.
     </div>
     <div class="section-sub" style="margin-top:14px;">${step.sub || ""}</div>
@@ -4466,16 +4466,13 @@ function renderPreorderBooks(step){
     card.appendChild(optOutBtn);
   }
 
-  if(!Array.isArray(currentData.preorderBooksList) || currentData.preorderBooksList.length === 0){
-    currentData.preorderBooksList = [ emptyPreorderBook() ];
+  if(!Array.isArray(currentData.preorderBooksList)){
+    currentData.preorderBooksList = [];
   }
   // Backfill ids/expansion state for any books saved before this existed.
   // A lone book starts expanded (nothing to collapse yet); multiple books
   // start collapsed so the screen doesn't open crazy-long.
   currentData.preorderBooksList.forEach(b => { if(!b.id) b.id = emptyPreorderBook().id; });
-  if(currentData.preorderBooksList.length === 1 && currentData.preorderBooksList[0]._expanded === undefined){
-    currentData.preorderBooksList[0]._expanded = true;
-  }
   currentData.preorderBooksList.forEach(b => { if(b._expanded === undefined) b._expanded = false; });
 
   const entriesWrap = document.createElement('div');
@@ -4498,7 +4495,7 @@ function renderPreorderBooks(step){
     const addBtn = document.createElement('button');
     addBtn.type = "button";
     addBtn.className = "btn btn-secondary btn-tiny";
-    addBtn.textContent = "+ Add another book";
+    addBtn.textContent = currentData.preorderBooksList.length ? "+ Add another book" : "+ Add a book";
     addBtn.style.marginTop = "6px";
     addBtn.onclick = () => {
       // Collapse everything else so the screen doesn't grow unbounded —
@@ -4519,9 +4516,10 @@ function renderPreorderBooks(step){
     };
     entriesWrap.appendChild(addBtn);
 
-    const previewLink = document.createElement('div');
-    previewLink.className = "home-link";
-    previewLink.style.marginTop = "16px";
+    const previewLink = document.createElement('button');
+    previewLink.type = "button";
+    previewLink.className = "btn btn-secondary btn-tiny";
+    previewLink.style.cssText = "margin-top:6px;margin-left:10px;";
     previewLink.textContent = "Preview my Presale Listing";
     previewLink.onclick = async () => {
       await saveAuthorData(currentAuthor, currentData);
@@ -5611,7 +5609,12 @@ function renderPreorderPreview(){
     goBtn.className = "btn btn-primary btn-compact";
     goBtn.style.marginTop = "10px";
     goBtn.textContent = "Go add books";
-    goBtn.onclick = () => goToSection("preorder-books");
+    goBtn.onclick = () => {
+      // Open the list with every book collapsed; books never given a title are dropped.
+      currentData.preorderBooksList = (currentData.preorderBooksList || []).filter(b => b && b.title && b.title.trim());
+      currentData.preorderBooksList.forEach(b => { b._expanded = false; });
+      goToSection("preorder-books");
+    };
     card.appendChild(goBtn);
   } else {
     const grid = document.createElement('div');
@@ -6171,7 +6174,12 @@ function renderPreorderStatus(){
     goBtn.className = "btn btn-primary btn-compact";
     goBtn.style.marginTop = "8px";
     goBtn.textContent = "Take me to my presale books list";
-    goBtn.onclick = () => goToSection("preorder-books");
+    goBtn.onclick = () => {
+      // Open the list with every book collapsed; books never given a title are dropped.
+      currentData.preorderBooksList = (currentData.preorderBooksList || []).filter(b => b && b.title && b.title.trim());
+      currentData.preorderBooksList.forEach(b => { b._expanded = false; });
+      goToSection("preorder-books");
+    };
     card.appendChild(goBtn);
 
     const optOutBtn = document.createElement('button');
