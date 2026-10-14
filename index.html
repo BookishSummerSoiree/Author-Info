@@ -7871,7 +7871,7 @@ async function restoreNavStateAndRender(){
   try{
     const qp = new URLSearchParams(location.search);
     const goTo = qp.get("go");
-    if(["orders","start","presale","payouts"].indexOf(goTo) >= 0 && qp.get("author")){
+    if(["orders","start","presale","payouts","home"].indexOf(goTo) >= 0 && qp.get("author")){
       history.replaceState(null, "", location.pathname);
       currentAuthor = qp.get("author");
       currentScreen = "loading";
@@ -7881,6 +7881,8 @@ async function restoreNavStateAndRender(){
       stepHistory = []; cameFromWhatsLeft = false; cameFromNavSubmenu = false;
       if(goTo === "orders"){
         currentScreen = currentData.meta.welcomeSeen ? "presale-orders" : "welcome";
+      } else if(goTo === "home"){
+        currentScreen = currentData.meta.welcomeSeen ? "home" : "welcome";
       } else {
         currentStepId = goTo === "presale" ? "preorder-books" : (goTo === "payouts" ? "preorder-payouts" : "general-info");
         currentScreen = "section";
