@@ -715,20 +715,20 @@ const STEPS = {
   "links": {
     title: "Links to Places Readers Can Find You",
     sideImage: FLOURISH.bookStackFlower,
-    sub: "Anywhere and everywhere readers might want to follow you, find you, or pay you for books/swag. We'll turn these into QR codes, so please use the actual URL (not just a profile ID).",
+    sub: "We'll turn these into QR codes and give them to every attendee\u2014making it even easier to find, follow, and get your books.<br><br>For these we need an actual URL (not just a profile ID).",
     fields: [
-      {key:"linkWebsite", label:"Website", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkInstagram", label:"Instagram", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkFacebook", label:"Facebook", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkCatalogue", label:"Your entire catalogue of books", type:"url", help:"Author website, Amazon author page, etc. Leave blank if it's the same as your Website link above."},
-      {key:"linkNewsletter", label:"Newsletter sign up", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkTiktok", label:"TikTok", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkThreads", label:"Threads", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkEtsy", label:"Etsy", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkPodcast", label:"Podcast", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkYoutube", label:"YouTube", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkBookbub", label:"BookBub", type:"url", help:"Leave blank if not applicable."},
-      {key:"linkSpotify", label:"Spotify", type:"url", help:"Leave blank if not applicable."},
+      {key:"linkWebsite", label:"Website", type:"url", linkStatus:true},
+      {key:"linkInstagram", label:"Instagram", type:"url", linkStatus:true},
+      {key:"linkFacebook", label:"Facebook", type:"url", linkStatus:true},
+      {key:"linkCatalogue", label:"Your entire catalogue of books", type:"url", linkStatus:true, help:"Author website, Amazon author page, etc. Leave blank if it's the same as your Website link above."},
+      {key:"linkNewsletter", label:"Newsletter sign up", type:"url", linkStatus:true},
+      {key:"linkTiktok", label:"TikTok", type:"url", linkStatus:true},
+      {key:"linkThreads", label:"Threads", type:"url", linkStatus:true},
+      {key:"linkEtsy", label:"Etsy", type:"url", linkStatus:true},
+      {key:"linkPodcast", label:"Podcast", type:"url", linkStatus:true},
+      {key:"linkYoutube", label:"YouTube", type:"url", linkStatus:true},
+      {key:"linkBookbub", label:"BookBub", type:"url", linkStatus:true},
+      {key:"linkSpotify", label:"Spotify", type:"url", linkStatus:true},
       {key:"linkOther", label:"Name and link to anywhere else that's been missed", type:"text", help:"Example: Spotify, [link]"},
       {key:"linksListStatus", label:"", type:"radio", statusToggle:true, options:[
         "That is all the links I will be adding (will mark this completed on your To-Do list)",
@@ -1068,7 +1068,7 @@ const IMPORTANT_DATES = [
     details:[
       "You can set up your table anytime between 10:00am–12:00pm.",
       "A tablecloth will be provided.",
-      "You will share a banquet table with one of the other authors."
+      "You will share an 8' banquet table with one of the other authors."
     ]
   }
 ];
@@ -2270,7 +2270,15 @@ function computeChecklist(){
   sections.push({
     title: "Links",
     note: "(optional \u2014 shared with all attendees)",
-    rows: linkFields.map(([key,label]) => ({ label, done: linksAllDone || isFieldFilled(key), required:false, target:"links", scrollToKey:key }))
+    // Everything shows as compact pills: filled-in links with a check, and links
+    // still to add (author said "I'll come back", or hasn't addressed it yet and
+    // hasn't said "that's all"). "I don't have this" links are left off.
+    pillsLabel: "Added",
+    pills: linkFields.filter(([key]) => isFieldFilled(key)).map(([key,label]) => ({ label, target:"links", scrollToKey:key })),
+    pills2Label: "Still to add",
+    pills2: linkFields.filter(([key]) => !isFieldFilled(key) && (linkStatusOf(key) === "later" || (linkStatusOf(key) !== "none" && !linksAllDone)))
+      .map(([key,label]) => ({ label, target:"links", scrollToKey:key })),
+    rows: []
   });
 
   // ---- Selling Books at the Soirée ----
@@ -2546,16 +2554,87 @@ function renderWhatsLeft(){
   toggleBtn.onclick = () => { todoShowOnlyOpen = !todoShowOnlyOpen; render(); };
   card.appendChild(toggleBtn);
 
+  // ---- Presale books still waiting to be signed (personalized ones are signed too) ----
+  function buildSignBlock(){
+    const st = presaleOrdersState;
+    if(st.lines === null && !st.error && !window.__todoOrdersLoading){
+      window.__todoOrdersLoading = true;
+      loadPresaleOrders().then(() => { window.__todoOrdersLoading = false; if(currentScreen === "whats-left") render(); });
+    }
+    if(!st.lines || !st.lines.length) return null;
+    const esc = t => String(t == null ? "" : t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const toSign = st.lines.filter(l => l.signed && !String(l.personalizedName || "").trim() && !l.signedDone);
+    const toPers = st.lines.filter(l => String(l.personalizedName || "").trim() && !l.personalizedDone);
+    if(!toSign.length && !toPers.length) return null;
+    const g = document.createElement('div');
+    g.style.cssText = "padding:12px 2px 4px;border-top:1px solid rgba(12,30,61,0.08);margin-top:6px;";
+    const counts = {};
+    toSign.forEach(l => { const k = l.title + "||"; counts[k] = (counts[k] || 0) + 1; });
+    toPers.forEach(l => { const k = l.title + "||" + l.personalizedName.trim(); counts[k] = (counts[k] || 0) + 1; });
+    let html = `<div style="font-weight:700;margin-bottom:4px;">Books that need to be signed (${toSign.length + toPers.length})</div>`;
+    Object.keys(counts).sort((x,y)=>x.localeCompare(y)).forEach(k => {
+      const parts = k.split("||");
+      html += `<div style="font-size:14px;margin:2px 0;">${esc(parts[0])}${parts[1] ? ` <span style="opacity:.7;">\u2014 personalized for ${esc(parts[1])}</span>` : ""}${counts[k] > 1 ? ` <span style="opacity:.7;">\u00d7 ${counts[k]}</span>` : ""}</div>`;
+    });
+    g.innerHTML = html;
+    const go = document.createElement('button');
+    go.type = "button";
+    go.className = "btn btn-secondary btn-compact";
+    go.style.cssText = "margin-top:10px;";
+    go.textContent = "Go to my presale orders";
+    go.onclick = () => { st.sort = toSign.length ? "signed" : "personalized"; currentScreen = "presale-orders"; render(); };
+    g.appendChild(go);
+    return g;
+  }
+
   sections.forEach(section => {
     const rows = todoShowOnlyOpen ? section.rows.filter(r => !r.done) : section.rows;
-    if(!rows.length) return;
+    const pills = (!todoShowOnlyOpen && section.pills) ? section.pills : [];
+    const pills2 = section.pills2 || [];
+    const extra = section.title === "Presale Books" ? buildSignBlock() : null;
+    if(!rows.length && !pills.length && !pills2.length && !extra) return;
     const wrap = document.createElement('div');
     wrap.className = "checklist-section";
     const title = document.createElement('div');
     title.className = "checklist-section-title";
     title.innerHTML = `<span>${section.title}</span>` + (section.note ? `<span class="note">${section.note}</span>` : "");
     wrap.appendChild(title);
+    if(pills.length){
+      const pw = document.createElement('div');
+      pw.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 2px;";
+      const lab = document.createElement('span');
+      lab.style.cssText = "font-size:13px;font-weight:700;opacity:.75;";
+      lab.textContent = (section.pillsLabel || "Done") + ":";
+      pw.appendChild(lab);
+      pills.forEach(pl => {
+        const b = document.createElement('button');
+        b.type = "button";
+        b.textContent = "\u2713 " + pl.label;
+        b.style.cssText = "border:1px solid rgba(12,30,61,0.2);background:#fff;border-radius:999px;padding:6px 12px;font-size:13px;font-family:inherit;cursor:pointer;color:inherit;";
+        b.onclick = () => goToSectionFromChecklist(pl.target, pl.scrollToKey);
+        pw.appendChild(b);
+      });
+      wrap.appendChild(pw);
+    }
+    if(pills2.length){
+      const pw2 = document.createElement('div');
+      pw2.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 2px;";
+      const lab2 = document.createElement('span');
+      lab2.style.cssText = "font-size:13px;font-weight:700;opacity:.75;";
+      lab2.textContent = (section.pills2Label || "To do") + ":";
+      pw2.appendChild(lab2);
+      pills2.forEach(pl => {
+        const b = document.createElement('button');
+        b.type = "button";
+        b.textContent = pl.label;
+        b.style.cssText = "border:1px dashed var(--terracotta,#E4593F);background:transparent;border-radius:999px;padding:6px 12px;font-size:13px;font-family:inherit;cursor:pointer;color:inherit;";
+        b.onclick = () => goToSectionFromChecklist(pl.target, pl.scrollToKey);
+        pw2.appendChild(b);
+      });
+      wrap.appendChild(pw2);
+    }
     rows.forEach(row => renderChecklistRow(wrap, row));
+    if(extra) wrap.appendChild(extra);
     card.appendChild(wrap);
   });
 
@@ -2880,7 +2959,7 @@ function renderSection(){
     const txt = document.createElement('div');
     txt.className = "section-sub";
     txt.style.margin = "0";
-    txt.textContent = step.sub || "";
+    txt.innerHTML = step.sub || "";
     row.appendChild(img);
     row.appendChild(txt);
     card.appendChild(row);
@@ -6835,7 +6914,7 @@ function renderPresaleOrders(){
 
   function checklist(kind){
     const isSigned = kind === "signed";
-    const items = st.lines.filter(l => isSigned ? l.signed : !!l.personalizedName.trim());
+    const items = st.lines.filter(l => isSigned ? (l.signed && !l.personalizedName.trim()) : !!l.personalizedName.trim());
     const doneKey = isSigned ? "signedDone" : "personalizedDone";
     if(!items.length){
       body.innerHTML = `<div class="section-sub">${isSigned ? "No signed copies have been ordered yet." : "No personalized copies have been ordered yet."}</div>`;
@@ -6855,8 +6934,8 @@ function renderPresaleOrders(){
       txt.style.cssText = l[doneKey] ? "opacity:.5;text-decoration:line-through;" : "";
       txt.innerHTML = `<div style="font-weight:600;">${esc(l.title)}${inSet(l) ? ` <span style="font-weight:400;font-size:12px;color:#6b7080;">(in a ${esc(l.seriesName || "series")} set)</span>` : ""}</div>`
         + (isSigned
-            ? `<div style="${small}">Ordered by ${esc(l.buyerName || "a reader")}${l.personalizedName.trim() ? " · personalize to: " + esc(l.personalizedName) : ""}</div>`
-            : `<div style="${small}">Personalize to: <b>${esc(l.personalizedName)}</b>${l.signed ? " · also signed" : ""}</div>`);
+            ? `<div style="${small}">Ordered by ${esc(l.buyerName || "a reader")}</div>`
+            : `<div style="${small}">Personalize to: <b>${esc(l.personalizedName)}</b></div>`);
       row.appendChild(cb); row.appendChild(txt);
       body.appendChild(row);
     });
@@ -6883,7 +6962,7 @@ function renderPresaleOrders(){
         const g = groups[l.title] || (groups[l.title] = { count:0, blank:0, signed:0, pers:0, single:0, inSet:0 });
         g.count++;
         if(inSet(l)) g.inSet++; else g.single++;
-        if(l.signed) g.signed++;
+        if(l.signed && !l.personalizedName.trim()) g.signed++;
         if(l.personalizedName.trim()) g.pers++;
         if(!l.signed && !l.personalizedName.trim()) g.blank++;
       });
@@ -6968,7 +7047,7 @@ function notifOptionalGaps(){
   if(!isFieldFilled("logo", "file")) gaps.push({key:"logo", label:"Add your logo"});
   if(MISC_FUN_KEYS.some(k => !isFieldFilled(k))) gaps.push({key:"miscFun", label:'The Misc Fun Stuff (those were the fun questions like "If you were to write a cheesy musical about your life, what would it be called?")'});
   const linksMarkedDone = currentData.linksListStatus === "That is all the links I will be adding (will mark this completed on your To-Do list)";
-  if(!linksMarkedDone && NOTIF_LINKS_KEYS.some(k => !isFieldFilled(k))) gaps.push({key:"links", label:"Links to places readers can find you"});
+  if(NOTIF_LINKS_KEYS.some(k => !isFieldFilled(k) && linkStatusOf(k) !== "none" && (linkStatusOf(k) === "later" || !linksMarkedDone))) gaps.push({key:"links", label:"Links to places readers can find you"});
   return gaps;
 }
 
@@ -7719,6 +7798,12 @@ function renderDonationKnowledge(step){
   app.appendChild(card);
 }
 
+function linkStatusOf(key){ return (currentData.linkStatuses && currentData.linkStatuses[key]) || ""; }
+function setLinkStatus(key, val){
+  if(!currentData.linkStatuses) currentData.linkStatuses = {};
+  if(val) currentData.linkStatuses[key] = val; else delete currentData.linkStatuses[key];
+}
+
 function renderField(f){
   const wrap = document.createElement('div');
   wrap.className = "field";
@@ -7786,6 +7871,33 @@ function renderField(f){
     }
     if(f.placeholder) inp.placeholder = f.placeholder;
     wrap.appendChild(inp);
+    if(f.linkStatus){
+      // Two small, quiet choices instead of "leave blank": one keeps the link
+      // on the author's To-Do list, the other takes it off.
+      const row = document.createElement('div');
+      row.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;";
+      const mkb = (label, val) => {
+        const b = document.createElement('button');
+        b.type = "button"; b.textContent = label; b.dataset.val = val;
+        b.onclick = () => { setLinkStatus(f.key, linkStatusOf(f.key) === val ? "" : val); paint(); };
+        return b;
+      };
+      const laterB = mkb("I have this, but I'll come back to fill it in", "later");
+      const noneB = mkb("I don't have this", "none");
+      function paint(){
+        [laterB, noneB].forEach(b => {
+          const on = linkStatusOf(f.key) === b.dataset.val;
+          b.style.cssText = "font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;font-family:inherit;line-height:1.3;"
+            + "border:1px solid " + (on ? "var(--terracotta,#E4593F)" : "rgba(12,30,61,0.2)") + ";"
+            + "background:" + (on ? "rgba(228,89,63,0.12)" : "transparent") + ";color:inherit;opacity:" + (on ? "1" : ".75") + ";";
+        });
+        row.style.display = inp.value.trim() ? "none" : "flex";
+      }
+      row.appendChild(laterB); row.appendChild(noneB);
+      inp.addEventListener('input', () => { if(inp.value.trim()) setLinkStatus(f.key, ""); paint(); });
+      paint();
+      wrap.appendChild(row);
+    }
   }
   return wrap;
 }
@@ -8332,6 +8444,7 @@ function collectFieldValues(step){
           delete currentData.meta.linkVerification[f.key];
         }
         currentData[f.key] = newVal;
+        if(f.linkStatus && String(newVal || "").trim()) setLinkStatus(f.key, "");
       }
     }
   });
