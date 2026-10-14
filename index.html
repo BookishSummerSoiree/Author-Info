@@ -864,7 +864,7 @@ const STEPS = {
     sub: "Here's where you tell me what you're up for.",
     info: true,
     body: `If you've been to the Soirée before you know that it's important to me that everyone goes home with a prize!<br><br>
-    The committee has already started working tirelessly on finding prizes, but it takes a ridiculous amount of time to gather 175 different prizes for our book-loving community.<br><br>
+    The committee has already started working tirelessly on finding prizes, but it takes a ridiculous amount of time and money to gather 175 different prizes for our book-loving community.<br><br>
     Are you interested in donating a book or two or ten, or a whole series or two or ten as a prize? If so: YEAH! If not that's fine because this is 100% optional.<br><br>
     Each book/series that is donated will have a custom bookmark inside listing you as the donating author, and include a QR barcode to your website.<br><br>
     <strong>FYI:</strong> To be able to package prizes and keep my mental sanity, the deadline for receiving prizes is <strong>May 1</strong> <em>(an exception would be if someone is donating a book that comes out between May 1 and the Soirée)</em>.`,
@@ -2154,12 +2154,23 @@ function isFieldFilled(key, type){
   return v !== undefined && v !== null && String(v).trim() !== "";
 }
 
+function donatedEntries_(){
+  if(Array.isArray(currentData.donatedBooksList) && currentData.donatedBooksList.length){
+    return currentData.donatedBooksList.filter(e => e && e.title && String(e.title).trim());
+  }
+  if(Array.isArray(currentData.donatedTitlesList)){
+    return currentData.donatedTitlesList.filter(t => t && String(t).trim()).map(t => ({title:String(t).trim(), qty:1}));
+  }
+  return [];
+}
 function donatedTitlesFilled(){
-  return Array.isArray(currentData.donatedTitlesList) && currentData.donatedTitlesList.some(t => t && t.trim() !== "");
+  return donatedEntries_().length > 0;
 }
 function donatedTitlesText(){
-  if(!Array.isArray(currentData.donatedTitlesList)) return "";
-  return currentData.donatedTitlesList.filter(t => t && t.trim() !== "").join("\n");
+  return donatedEntries_().map(e=>{
+    const q = parseInt(e.qty,10);
+    return String(e.title).trim() + (q > 1 ? " (x" + q + ")" : "");
+  }).join("\n");
 }
 function sellingTitlesFilled(){
   return Array.isArray(currentData.sellingTitlesList) && currentData.sellingTitlesList.some(t => t && t.trim() !== "");
@@ -3600,77 +3611,289 @@ function renderDonationTitles(step){
     <div class="section-sub">${step.sub || ""}</div>
   `;
 
-  if(!Array.isArray(currentData.donatedTitlesList) || currentData.donatedTitlesList.length === 0){
-    currentData.donatedTitlesList = [""];
+  // ---------- data ----------
+  if(!Array.isArray(currentData.donatedBooksList)) currentData.donatedBooksList = [];
+  // Older versions kept a plain list of titles (only in this browser).
+  // Bring those along as "entered by hand" prizes of 1 each.
+  if(currentData.donatedBooksList.length === 0 && Array.isArray(currentData.donatedTitlesList)){
+    currentData.donatedTitlesList.forEach(t=>{
+      if(t && String(t).trim()) currentData.donatedBooksList.push({kind:"manual", title:String(t).trim(), series:"", qty:1});
+    });
+  }
+  const donList = () => currentData.donatedBooksList;
+  const norm = s => String(s||"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+  const keyOf = (kind, title) => (kind === "series" ? "series:" : "book:") + norm(title);
+
+  // Everything already entered in this app (books selling at the Soirée +
+  // presale books), with duplicates removed. Series first (books in series
+  // order), then single books A-Z.
+  function buildCatalog(){
+    const seen = {};
+    const seriesMap = {};
+    const singles = [];
+    (currentData.preorderBooksList || []).forEach(b=>{
+      if(!b || !b.title || !b.title.trim()) return;
+      const nk = norm(b.title);
+      if(seen[nk]) return;
+      seen[nk] = true;
+      if(b.isSeries === "Yes" && b.seriesName && b.seriesName.trim()){
+        const sk = norm(b.seriesName);
+        if(!seriesMap[sk]) seriesMap[sk] = {name:b.seriesName.trim(), books:[]};
+        seriesMap[sk].books.push({title:b.title.trim(), num:parseFloat(b.seriesBookNumber)});
+      } else {
+        singles.push({title:b.title.trim()});
+      }
+    });
+    (currentData.sellingTitlesList || []).forEach(t=>{
+      if(!t || !String(t).trim()) return;
+      const nk = norm(t);
+      if(seen[nk] || seriesMap[nk]) return;
+      seen[nk] = true;
+      singles.push({title:String(t).trim()});
+    });
+    const series = Object.keys(seriesMap).map(k=>seriesMap[k]);
+    series.sort((a,b)=> a.name.localeCompare(b.name));
+    series.forEach(s=> s.books.sort((a,b)=>{
+      const an = isNaN(a.num) ? 1e9 : a.num, bn = isNaN(b.num) ? 1e9 : b.num;
+      return an !== bn ? an - bn : a.title.localeCompare(b.title);
+    }));
+    singles.sort((a,b)=> a.title.localeCompare(b.title));
+    return {series, singles};
   }
 
-  const entriesWrap = document.createElement('div');
-  card.appendChild(entriesWrap);
+  const viaShortcut = cameFromWhatsLeft || cameFromNavSubmenu;
+  let showList = donList().some(e => e.kind !== "manual");
+  let showManual = donList().some(e => e.kind === "manual");
 
-  function inputEls(){
-    return Array.from(entriesWrap.querySelectorAll('input'));
+  // ---------- intro + the two pill buttons ----------
+  const intro = document.createElement('div');
+  intro.className = "help";
+  intro.style.cssText = "margin:6px 0 16px;";
+  intro.textContent = "Pick whichever way is easiest — you can use both.";
+  card.appendChild(intro);
+
+  const pillWrap = document.createElement('div');
+  pillWrap.style.cssText = "display:flex;flex-direction:column;gap:12px;align-items:stretch;margin-bottom:18px;";
+  const pillList = document.createElement('button');
+  pillList.type = "button";
+  pillList.textContent = "Show me the book/series titles I've already entered";
+  const pillManual = document.createElement('button');
+  pillManual.type = "button";
+  pillManual.textContent = "I will enter a title I haven't listed in this app yet";
+  [pillList, pillManual].forEach(b=>{ b.style.cssText = "text-align:left;white-space:normal;"; pillWrap.appendChild(b); });
+  card.appendChild(pillWrap);
+
+  const listPanel = document.createElement('div');
+  const manualPanel = document.createElement('div');
+  card.appendChild(listPanel);
+  card.appendChild(manualPanel);
+
+  function restylePills(){
+    pillList.className = "btn btn-compact " + (showList ? "btn-primary" : "btn-secondary");
+    pillManual.className = "btn btn-compact " + (showManual ? "btn-primary" : "btn-secondary");
+  }
+  pillList.onclick = () => { showList = !showList; restylePills(); renderListPanel(); };
+  pillManual.onclick = () => {
+    showManual = !showManual;
+    if(showManual && !donList().some(e => e.kind === "manual")){
+      donList().push({kind:"manual", title:"", series:"", qty:""});
+    }
+    restylePills();
+    renderManualPanel();
+  };
+
+  // ---------- panel 1: titles already entered ----------
+  function renderListPanel(){
+    listPanel.innerHTML = "";
+    if(!showList) return;
+    const cat = buildCatalog();
+    const box = document.createElement('div');
+    box.style.cssText = "margin-bottom:18px;";
+    if(!cat.series.length && !cat.singles.length){
+      const none = document.createElement('div');
+      none.className = "info-box";
+      none.textContent = "You haven't entered any book or series titles in this app yet — use the other button to type in the title(s) you'll donate.";
+      box.appendChild(none);
+      listPanel.appendChild(box);
+      return;
+    }
+    const p = document.createElement('div');
+    p.style.cssText = "font-family:'Lora',serif;font-size:15px;font-weight:700;margin-bottom:8px;";
+    p.textContent = "Select those title(s) you are willing to donate as a prize(s).";
+    box.appendChild(p);
+
+    function addRow(kind, title, opts){
+      opts = opts || {};
+      const key = keyOf(kind, title);
+      const find = () => donList().find(e => e.kind !== "manual" && e.key === key);
+      const wrap = document.createElement('div');
+      wrap.style.cssText = "padding:8px 2px;border-bottom:1px solid rgba(12,30,61,0.08);" + (opts.indent ? "margin-left:26px;" : "");
+      const label = document.createElement('label');
+      label.style.cssText = "display:flex;align-items:center;gap:10px;font-family:'Lora',serif;font-size:15px;cursor:pointer;";
+      const cb = document.createElement('input');
+      cb.type = "checkbox";
+      cb.style.cssText = "accent-color:var(--terracotta);width:18px;height:18px;flex-shrink:0;";
+      cb.checked = !!find();
+      const span = document.createElement('span');
+      if(kind === "series"){
+        span.innerHTML = "";
+        const b = document.createElement('strong'); b.textContent = title;
+        const tag = document.createElement('span'); tag.style.cssText = "font-size:12px;opacity:.65;margin-left:6px;"; tag.textContent = "(whole series)";
+        span.appendChild(b); span.appendChild(tag);
+      } else {
+        span.textContent = (opts.num && !isNaN(opts.num) ? "Book " + opts.num + ": " : "") + title;
+      }
+      label.appendChild(cb); label.appendChild(span);
+      wrap.appendChild(label);
+
+      const qtyBox = document.createElement('div');
+      qtyBox.style.cssText = "margin:8px 0 2px 28px;display:" + (cb.checked ? "block" : "none") + ";";
+      const q = document.createElement('div');
+      q.className = "help";
+      q.style.marginBottom = "6px";
+      q.textContent = kind === "series"
+        ? "How many of this series are you planning on donating?"
+        : "How many of this title are you planning on donating?";
+      const qi = document.createElement('input');
+      qi.type = "number"; qi.min = "1"; qi.step = "1"; qi.inputMode = "numeric";
+      qi.style.cssText = "width:90px;";
+      const existing = find();
+      qi.value = existing ? (existing.qty === "" ? "" : existing.qty) : "1";
+      qi.addEventListener('input', ()=>{ const e = find(); if(e) e.qty = qi.value === "" ? "" : parseInt(qi.value,10); });
+      qi.addEventListener('blur', ()=>{ const e = find(); if(e && !(parseInt(qi.value,10) >= 1)){ e.qty = 1; qi.value = "1"; } });
+      qtyBox.appendChild(q); qtyBox.appendChild(qi);
+      wrap.appendChild(qtyBox);
+
+      cb.addEventListener('change', ()=>{
+        if(cb.checked){
+          if(!find()) donList().push({kind:kind, key:key, title:title, series:opts.series || "", qty:1});
+          qi.value = "1";
+          qtyBox.style.display = "block";
+          qi.focus(); qi.select();
+        } else {
+          const i = donList().findIndex(e => e.kind !== "manual" && e.key === key);
+          if(i !== -1) donList().splice(i, 1);
+          qtyBox.style.display = "none";
+        }
+      });
+      box.appendChild(wrap);
+    }
+
+    cat.series.forEach(s=>{
+      addRow("series", s.name);
+      s.books.forEach(b => addRow("book", b.title, {indent:true, num:b.num, series:s.name}));
+    });
+    cat.singles.forEach(b => addRow("book", b.title));
+    listPanel.appendChild(box);
   }
 
-  function renderEntries(focusIdx){
-    entriesWrap.innerHTML = "";
-    currentData.donatedTitlesList.forEach((val, i)=>{
+  // ---------- panel 2: titles typed in by hand (with a quantity) ----------
+  function renderManualPanel(focusIdx){
+    manualPanel.innerHTML = "";
+    if(!showManual) return;
+    const manual = donList().filter(e => e.kind === "manual");
+    if(!manual.length) donList().push({kind:"manual", title:"", series:"", qty:""});
+    const rows = donList().filter(e => e.kind === "manual");
+    const head = document.createElement('div');
+    head.style.cssText = "font-family:'Lora',serif;font-size:15px;font-weight:700;margin:6px 0 8px;";
+    head.textContent = "Enter each prize and how many you plan to donate.";
+    manualPanel.appendChild(head);
+    rows.forEach((entry, i)=>{
       const row = document.createElement('div');
-      row.className = "field";
-      row.style.marginBottom = "8px";
+      row.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:8px;";
       const inp = document.createElement('input');
       inp.type = "text";
       inp.placeholder = "Enter a prize";
-      inp.value = val || "";
-      inp.addEventListener('input', ()=>{ currentData.donatedTitlesList[i] = inp.value; updateStatusVisibility(); });
+      inp.value = entry.title || "";
+      inp.style.cssText = "flex:1;min-width:0;";
+      inp.addEventListener('input', ()=>{ entry.title = inp.value; });
+      const qi = document.createElement('input');
+      qi.type = "number"; qi.min = "1"; qi.step = "1"; qi.inputMode = "numeric";
+      qi.placeholder = "How many?";
+      qi.value = entry.qty === "" || entry.qty === undefined ? "" : entry.qty;
+      qi.style.cssText = "width:96px;flex-shrink:0;";
+      qi.addEventListener('input', ()=>{ entry.qty = qi.value === "" ? "" : parseInt(qi.value,10); });
       inp.addEventListener('keydown', (e)=>{
         if(e.key === "Enter"){
           e.preventDefault();
-          currentData.donatedTitlesList[i] = inp.value;
-          if(inp.value.trim() === "") return; // don't chain empty fields
-          if(i === currentData.donatedTitlesList.length - 1){
-            currentData.donatedTitlesList.push("");
-          }
-          renderEntries(i + 1);
+          if(inp.value.trim() === "") return;
+          if(i === rows.length - 1) donList().push({kind:"manual", title:"", series:"", qty:""});
+          renderManualPanel(i + 1);
         }
       });
-      row.appendChild(inp);
-      entriesWrap.appendChild(row);
-
-      if(i === currentData.donatedTitlesList.length - 1){
-        const addBtn = document.createElement('button');
-        addBtn.type = "button";
-        addBtn.className = "btn btn-secondary btn-tiny";
-        addBtn.style.cssText = "margin-top:-2px;margin-bottom:14px;";
-        addBtn.textContent = "+ Add another prize";
-        addBtn.onclick = () => {
-          currentData.donatedTitlesList.push("");
-          renderEntries(currentData.donatedTitlesList.length - 1);
-        };
-        entriesWrap.appendChild(addBtn);
-      }
+      row.appendChild(inp); row.appendChild(qi);
+      manualPanel.appendChild(row);
     });
+    const addBtn = document.createElement('button');
+    addBtn.type = "button";
+    addBtn.className = "btn btn-secondary btn-tiny";
+    addBtn.style.cssText = "margin-top:2px;margin-bottom:14px;";
+    addBtn.textContent = "+ Add another prize";
+    addBtn.onclick = () => {
+      donList().push({kind:"manual", title:"", series:"", qty:""});
+      renderManualPanel(rows.length);
+    };
+    manualPanel.appendChild(addBtn);
     if(focusIdx !== undefined){
-      const els = inputEls();
-      if(els[focusIdx]) els[focusIdx].focus();
+      const ins = manualPanel.querySelectorAll('input[type=text]');
+      if(ins[focusIdx]) ins[focusIdx].focus();
     }
   }
 
-  renderEntries();
+  restylePills();
+  renderListPanel();
+  renderManualPanel();
 
-  const statusToggle = buildStatusToggle("donationListStatus", [
-    {value:"complete", text:"This is a complete list of my donation(s) (will mark this completed on your To-Do list)"},
-    {value:"tentative", text:"I might add/subtract to this list later (will keep this active on your To-Do list)"}
-  ]);
-  card.appendChild(statusToggle);
-  function updateStatusVisibility(){
-    const hasEntry = currentData.donatedTitlesList.some(t => t && t.trim() !== "");
-    statusToggle.style.display = hasEntry ? "" : "none";
-  }
-  updateStatusVisibility();
-
+  // ---------- bottom buttons ----------
   function collectValues(){
-    // Entries are already synced live via each input's 'input' listener.
+    const out = [];
+    donList().forEach(e=>{
+      if(!e || !e.title || !String(e.title).trim()) return;
+      let q = parseInt(e.qty, 10);
+      if(!(q >= 1)) q = 1;
+      out.push({kind:e.kind, key:e.key, title:String(e.title).trim(), series:e.series || "", qty:q});
+    });
+    currentData.donatedBooksList = out;
+    const total = out.reduce((s,e)=> s + e.qty, 0);
+    if(total > 0) currentData.donatedCount = String(total);
+    currentData.donatedTitlesList = out.map(e => e.title);
   }
+
+  async function finishList(status){
+    collectValues();
+    if(status === "complete" && currentData.donatedBooksList.length === 0){
+      showToast("Pick or enter at least one prize first — or use the links at the bottom to leave this for later.");
+      return;
+    }
+    currentData.donationListStatus = status;
+    if(viaShortcut){
+      await saveAuthorData(currentAuthor, currentData);
+      showToast("Saved!");
+      if(cameFromWhatsLeft){ cameFromWhatsLeft = false; currentScreen = "whats-left"; }
+      else { cameFromNavSubmenu = false; currentScreen = "nav-submenu"; }
+      render();
+    } else {
+      advanceStep(step);
+    }
+  }
+
+  const doneWrap = document.createElement('div');
+  doneWrap.style.cssText = "margin-top:26px;padding-top:22px;border-top:1px solid rgba(12,30,61,0.1);display:flex;flex-direction:column;gap:12px;align-items:stretch;";
+  const doneBtn = document.createElement('button');
+  doneBtn.type = "button";
+  doneBtn.className = "btn btn-primary btn-compact";
+  doneBtn.style.cssText = "white-space:normal;";
+  doneBtn.textContent = "These are all the prize(s) I will be donating";
+  doneBtn.onclick = () => finishList("complete");
+  const laterBtn = document.createElement('button');
+  laterBtn.type = "button";
+  laterBtn.className = "btn btn-secondary btn-compact";
+  laterBtn.style.cssText = "white-space:normal;";
+  laterBtn.textContent = "I might add or change prizes later (keeps this on my To-Do list)";
+  laterBtn.onclick = () => finishList("tentative");
+  doneWrap.appendChild(doneBtn); doneWrap.appendChild(laterBtn);
+  card.appendChild(doneWrap);
+
 
   const enteredViaShortcut = cameFromWhatsLeft || cameFromNavSubmenu;
 
@@ -3679,7 +3902,6 @@ function renderDonationTitles(step){
     savePrompt.className = "save-prompt";
     savePrompt.style.cssText = "border-top:none;margin-top:16px;padding-top:0;";
     savePrompt.textContent = "Save your answers and move to the next section?";
-    card.appendChild(savePrompt);
 
     const btnRow = document.createElement('div');
     btnRow.className = "btn-row";
@@ -3702,8 +3924,6 @@ function renderDonationTitles(step){
       currentScreen = "home";
       render();
     }
-    btnRow.appendChild(saveNext);
-    card.appendChild(btnRow);
 
     const btnRowSecondary = document.createElement('div');
     btnRowSecondary.className = "btn-row";
