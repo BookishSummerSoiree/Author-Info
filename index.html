@@ -5250,10 +5250,10 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           ? `${fmtName(f)}: regular price ${money_(reg)}. With your ${dt} Soirée discount, it's <strong>${money_(fin)}</strong>.<br>`
           : `${fmtName(f)}: <strong>${money_(reg)}</strong> (no Soirée discount).<br>`;
       });
-      if(rule.type !== "none") html += `<span class="help">This updates on its own if you change the price.${rule.scope === "all" ? " The same discount applies to all your books." : ""}</span>`;
+      if(rule.type !== "none") html += `<div class="help" style="margin-top:6px;">Updates on its own if you change the price.</div>`;
       sum.innerHTML = html;
       const chg = mk("Change Soirée pricing", false, ()=>{ soireeEditing = true; renderSoireeBlock(); });
-      chg.style.marginTop = "10px";
+      chg.style.cssText += "display:block;margin-top:10px;padding:5px 12px;font-size:12px;";
       sum.appendChild(chg);
       box.appendChild(sum);
       return;
@@ -5296,17 +5296,29 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amt;
         inp.placeholder = kind === "percent" ? "e.g. 10" : "e.g. 2";
         const res = document.createElement('div');
-        res.style.cssText = "font-size:14px;margin:4px 0 12px;min-height:20px;";
+        res.style.cssText = "font-size:14px;line-height:1.55;margin:4px 0 12px;";
+        const scopeBox = document.createElement('div');
         function upd(){
           amt = inp.value;
-          const reg = firstReg();
-          res.innerHTML = (reg !== null && parseFloat(amt) > 0)
-            ? `That makes the Soirée price <strong>${money_(discountedSeriesTotal(reg, {type:kind, value:amt}))}</strong> <span style="opacity:.65;">(instead of ${money_(reg)})</span>` : "";
+          const ok = parseFloat(amt) > 0;
+          let html = "";
+          if(ok) bookFormatList(book).forEach(f=>{
+            const r = parseFloat(bookFormatPrice(book, f).regular);
+            if(isNaN(r)) return;
+            html += `${fmtName(f)}: regular price ${money_(r)}. With this discount, it's <strong>${money_(discountedSeriesTotal(r, {type:kind, value:amt}))}</strong>.<br>`;
+          });
+          res.innerHTML = html;
+          scopeBox.innerHTML = "";
+          if(!ok) return;
+          const sq = document.createElement('div');
+          sq.style.cssText = "line-height:1.5;margin:6px 0 10px;";
+          sq.textContent = "Do you want this same discount applied to all your books, or would you rather decide with each book you enter?";
+          scopeBox.appendChild(sq);
+          scopeBox.appendChild(mk("Same discount for all my books", true, ()=>done({type:kind, value:amt}, "all")));
+          scopeBox.appendChild(mk("I'll decide with each book", true, ()=>done({type:kind, value:amt}, "each")));
         }
         inp.addEventListener('input', upd);
-        btns.appendChild(inp); btns.appendChild(res);
-        btns.appendChild(mk("Next", true, ()=>{ if(!(parseFloat(amt) > 0)){ showToast("Enter how much to take off first."); return; } step = "scope"; draw(); }));
-        btns.appendChild(mk("\u2190 Back", false, ()=>{ step = "kind"; draw(); }));
+        btns.appendChild(inp); btns.appendChild(res); btns.appendChild(scopeBox);
         upd();
       } else if(step === "scope"){
         q.textContent = "Do you want this same discount applied to all your books, or would you rather decide with each book you enter?";
@@ -5613,7 +5625,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         q.style.cssText = "line-height:1.5;margin-bottom:12px;";
         if(pre === "ask"){
           const dtxt = br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2));
-          q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special series discount that's different from that?`;
+          q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special <em><u>series</u></em> discount that's different from that?`;
           box.appendChild(q);
           const r0 = document.createElement('div');
           r0.appendChild(mk("Yes, a different series discount", true, ()=>{ pre = "done"; draw(); }));
