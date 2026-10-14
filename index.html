@@ -4990,14 +4990,17 @@ function bookRuleOf(book){
 }
 function defaultSoireeRule(){
   const l = (currentData && currentData.preorderBooksList) || [];
+  const keep = l.find(x => x && x.soireeDefault && x.soireeDefault.type);
+  if(keep) return keep.soireeDefault;
   const b = l.find(x => x && x.soireeDiscount && x.soireeDiscount.scope === "all"
     && (x.soireeDiscount.type === "percent" || x.soireeDiscount.type === "dollar"));
   return b ? b.soireeDiscount : null;
 }
 function applySoireeRule(book, rule, scope){
+  if(rule.type === "percent" && !isNaN(parseFloat(rule.value))) rule = {type:rule.type, value:String(Math.round(parseFloat(rule.value)))};
   const r = {type:rule.type, value:rule.value, scope:scope};
   if(scope === "all"){
-    ((currentData && currentData.preorderBooksList) || []).forEach(b => { if(b) b.soireeDiscount = {type:r.type, value:r.value, scope:"all"}; });
+    ((currentData && currentData.preorderBooksList) || []).forEach(b => { if(b){ b.soireeDiscount = {type:r.type, value:r.value, scope:"all"}; b.soireeDefault = {type:r.type, value:r.value}; } });
   }
   book.soireeDiscount = r;
   recomputeSeriesPrices();
@@ -5022,17 +5025,29 @@ function seriesDiscountOf(book){
   if(book.seriesDiscount && book.seriesDiscount.type) return book.seriesDiscount;
   const sib = seriesBooksFor(book).find(b => b.seriesDiscount && b.seriesDiscount.type);
   if(sib) return sib.seriesDiscount;
-  // A discount the author applied to ALL their series carries over to a series that has none of its own.
-  const all = (currentData.preorderBooksList || []).find(b => b && b.seriesDiscount && b.seriesDiscount.scope === "all" && (b.seriesDiscount.type === "percent" || b.seriesDiscount.type === "dollar"));
-  return all ? all.seriesDiscount : null;
+  // A default the author set for ALL their series carries over to any series without its own.
+  const def = seriesDefaultOf();
+  return def ? {type:def.type, value:def.value, basis:"", scope:"all"} : null;
 }
-function setSeriesDiscountForAllSeries(book, d){
-  const dd = {type:d.type, value:d.value, basis:"", scope:"all"};
-  setSeriesDiscount(book, dd);
-  ((currentData && currentData.preorderBooksList) || []).forEach(b => { if(b && b.isSeries === "Yes" && (b.seriesName || "").trim()) setSeriesDiscount(b, dd); });
+function seriesDefaultOf(){
+  const list = (currentData && currentData.preorderBooksList) || [];
+  const b = list.find(x => x && x.seriesDefault && x.seriesDefault.type);
+  if(b) return b.seriesDefault;
+  const old = list.find(x => x && x.seriesDiscount && x.seriesDiscount.scope === "all" && (x.seriesDiscount.type === "percent" || x.seriesDiscount.type === "dollar"));
+  return old ? {type:old.seriesDiscount.type, value:old.seriesDiscount.value} : null;
 }
 function setSeriesDiscount(book, d){
-  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:d.value, basis:d.basis || "", scope:d.scope || "one"}; });
+  seriesBooksFor(book).concat([book]).forEach(b => { b.seriesDiscount = {type:d.type, value:(d.type === "percent" && !isNaN(parseFloat(d.value))) ? String(Math.round(parseFloat(d.value))) : d.value, basis:d.basis || "", scope:d.scope || "one"}; });
+}
+function setSeriesDiscountForAllSeries(book, d){
+  const val = (d.type === "percent" && !isNaN(parseFloat(d.value))) ? String(Math.round(parseFloat(d.value))) : d.value;
+  const dd = {type:d.type, value:val, basis:"", scope:"all"};
+  setSeriesDiscount(book, dd);
+  ((currentData && currentData.preorderBooksList) || []).forEach(b => {
+    if(!b) return;
+    b.seriesDefault = {type:d.type, value:val};
+    if(b.isSeries === "Yes" && (b.seriesName || "").trim()) setSeriesDiscount(b, dd);
+  });
 }
 function discountedSeriesTotal(total, d){
   const v = parseFloat(d && d.value);
@@ -5268,7 +5283,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     }
 
     // ---- setup conversation ----
-    let step = "ask", kind = "percent", amt = "";
+    let step = "ask", kind = "percent", amt = "", pend = null;
+    function defText(d){ return d.type === "percent" ? (d.value + "% off") : (d.type === "dollar" ? ("$" + parseFloat(d.value).toFixed(2) + " off each book") : "no discount"); }
     const panel = document.createElement('div');
     panel.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-left:4px solid var(--terracotta,#E4593F);border-radius:10px;padding:14px 16px;";
     box.appendChild(panel);
@@ -5291,17 +5307,28 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       if(step === "ask"){
         q.textContent = "Do you want special Soirée pricing for this book, to give people a nudge to grab it?";
         btns.appendChild(mk("Yes", true, ()=>{ step = "kind"; draw(); }));
-        btns.appendChild(mk("No", false, ()=>done({type:"none", value:""}, "each")));
+        btns.appendChild(mk("No", false, ()=>{
+          const dflt = defaultSoireeRule();
+          if(dflt && dflt.type !== "none"){ pend = {type:"none", value:""}; step = "defq"; draw(); }
+          else done({type:"none", value:""}, "each");
+        }));
         btns.appendChild(mk("I'll type my own Soirée price", false, ()=>{ soireeEditing = false; book.soireeDiscount = {type:"manual", value:"", scope:"each"}; renderSoireeBlock(); }));
       } else if(step === "kind"){
         q.textContent = "Do you want it to be a specific dollar amount off, or a percentage off?";
         btns.appendChild(mk("$ off", true, ()=>{ kind = "dollar"; step = "amount"; draw(); }));
         btns.appendChild(mk("% off", true, ()=>{ kind = "percent"; step = "amount"; draw(); }));
+      } else if(step === "defq"){
+        const dflt = defaultSoireeRule();
+        q.innerHTML = `<strong>You have set a default of ${defText(dflt)} for all your books.</strong><br>Do you want to change the default, or change it only for this book?`;
+        btns.appendChild(mk("Change the default for all books", true, ()=>done(pend, "all")));
+        btns.appendChild(mk("Only this book", true, ()=>done(pend, "each")));
+        btns.appendChild(mk("Never mind", false, ()=>{ step = "ask"; draw(); }));
       } else if(step === "amount"){
         q.textContent = kind === "percent" ? "What percentage off would you like?" : "How many dollars off would you like?";
         const inp = document.createElement('input');
-        inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+        inp.type = "number"; inp.inputMode = kind === "percent" ? "numeric" : "decimal"; inp.step = kind === "percent" ? "1" : "0.01"; inp.min = "0";
         inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amt;
+        if(kind === "percent") inp.addEventListener('change', ()=>{ if(inp.value !== "" && !isNaN(parseFloat(inp.value))){ inp.value = Math.round(parseFloat(inp.value)); upd(); } });
         inp.placeholder = kind === "percent" ? "e.g. 10" : "e.g. 2";
         const res = document.createElement('div');
         res.style.cssText = "font-size:14px;line-height:1.55;margin:4px 0 12px;";
@@ -5318,8 +5345,17 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           res.innerHTML = html;
           scopeBox.innerHTML = "";
           if(!ok) return;
+          const dflt = defaultSoireeRule();
+          const differs = dflt && !(dflt.type === kind && String(parseFloat(dflt.value) || 0) === String(Math.round(parseFloat(amt)) || 0));
           const sq = document.createElement('div');
           sq.style.cssText = "line-height:1.5;margin:6px 0 10px;";
+          if(differs){
+            sq.innerHTML = `<strong>You have set a default of ${defText(dflt)} for all your books.</strong><br>Do you want to change the default, or change it only for this book?`;
+            scopeBox.appendChild(sq);
+            scopeBox.appendChild(mk("Change the default for all books", true, ()=>done({type:kind, value:amt}, "all")));
+            scopeBox.appendChild(mk("Only this book", true, ()=>done({type:kind, value:amt}, "each")));
+            return;
+          }
           sq.textContent = "Do you want this same discount applied to all your books, or would you rather decide with each book you enter?";
           scopeBox.appendChild(sq);
           scopeBox.appendChild(mk("Same discount for all my books", true, ()=>done({type:kind, value:amt}, "all")));
@@ -5619,11 +5655,38 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         b.style.cssText = "white-space:normal;margin:0 8px 8px 0;";
         b.textContent = label; b.onclick = fn; return b;
       }
-      function save(d){
+      function doSave(d){
         setSeriesDiscount(book, d);
         recomputeSeriesPrices();
         editingSeriesPricing = false;
         renderSeriesFormatPrices();
+      }
+      function saveAllSeries(d){
+        setSeriesDiscountForAllSeries(book, d);
+        recomputeSeriesPrices();
+        editingSeriesPricing = false;
+        renderSeriesFormatPrices();
+      }
+      // If the author already set a default for every series, a different choice
+      // here asks whether to change that default or only this series.
+      function save(d){
+        const def = seriesDefaultOf();
+        const same = def && d.type === def.type && String(parseFloat(d.value) || 0) === String(parseFloat(def.value) || 0);
+        if(def && !same && (d.type === "percent" || d.type === "dollar" || d.type === "none")){
+          const txt = def.type === "percent" ? (def.value + "% off") : (def.type === "dollar" ? ("$" + parseFloat(def.value).toFixed(2) + " off") : "no discount (just the books added up)");
+          box.innerHTML = "";
+          const q = document.createElement('div');
+          q.style.cssText = "line-height:1.5;margin-bottom:12px;";
+          q.innerHTML = `<strong>You have set a default of ${txt} for all your series.</strong><br>Do you want to change the default, or change it only for this series?`;
+          box.appendChild(q);
+          const r = document.createElement('div');
+          r.appendChild(mk("Change the default for all series", true, ()=>saveAllSeries(d)));
+          r.appendChild(mk("Only this series", true, ()=>doSave(d)));
+          r.appendChild(mk("Never mind", false, ()=>draw()));
+          box.appendChild(r);
+          return;
+        }
+        doSave(d);
       }
       function draw(){
         box.innerHTML = "";
@@ -5653,8 +5716,9 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           q2.textContent = mode === "percent" ? "What percentage off would you like?" : "How many dollars off would you like?";
           box.appendChild(q2);
           const inp = document.createElement('input');
-          inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+          inp.type = "number"; inp.inputMode = mode === "percent" ? "numeric" : "decimal"; inp.step = mode === "percent" ? "1" : "0.01"; inp.min = "0";
           inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amtVal;
+          if(mode === "percent") inp.addEventListener('change', ()=>{ if(inp.value !== "" && !isNaN(parseFloat(inp.value))){ inp.value = Math.round(parseFloat(inp.value)); (typeof updD === "function" ? updD : upd)(); } });
           inp.placeholder = mode === "percent" ? "e.g. 15" : "e.g. 5";
           const res = document.createElement('div');
           res.style.cssText = "font-size:14px;line-height:1.55;margin:4px 0 12px;";
@@ -5675,8 +5739,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
             sq.style.cssText = "line-height:1.5;margin:6px 0 10px;";
             sq.innerHTML = "Do you want this discount to apply to <em>all</em> your series? Or just this one?";
             scopeBox.appendChild(sq);
-            scopeBox.appendChild(mk("All my series", true, ()=>{ setSeriesDiscountForAllSeries(book, d); recomputeSeriesPrices(); editingSeriesPricing = false; renderSeriesFormatPrices(); }));
-            scopeBox.appendChild(mk("Just this one", true, ()=>save({type:mode, value:amtVal})));
+            scopeBox.appendChild(mk("All my series", true, ()=>saveAllSeries(d)));
+            scopeBox.appendChild(mk("Just this one", true, ()=>doSave({type:mode, value:amtVal})));
           }
           inp.addEventListener('input', updD);
           box.appendChild(inp); box.appendChild(res); box.appendChild(scopeBox);
@@ -5701,8 +5765,9 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           mrow.appendChild(mk("$ off", mode === "dollar", ()=>{ mode = "dollar"; draw(); }));
           box.appendChild(mrow);
           const inp = document.createElement('input');
-          inp.type = "number"; inp.inputMode = "decimal"; inp.step = "0.01"; inp.min = "0";
+          inp.type = "number"; inp.inputMode = mode === "percent" ? "numeric" : "decimal"; inp.step = mode === "percent" ? "1" : "0.01"; inp.min = "0";
           inp.style.cssText = "width:120px;margin-bottom:10px;"; inp.value = amtVal;
+          if(mode === "percent") inp.addEventListener('change', ()=>{ if(inp.value !== "" && !isNaN(parseFloat(inp.value))){ inp.value = Math.round(parseFloat(inp.value)); (typeof updD === "function" ? updD : upd)(); } });
           inp.placeholder = mode === "percent" ? "e.g. 10" : "e.g. 5";
           const res = document.createElement('div');
           res.style.cssText = "font-size:14px;margin:4px 0 12px;min-height:20px;line-height:1.5;";
@@ -5749,7 +5814,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
             const reg = r.total;
             const fin = isBooks ? seriesSumForFormat(book, f, true).total : discountedSeriesTotal(reg, st);
             html += (dt && fin !== reg)
-              ? `${fmtLabel_(f)}: with the books you've entered so far, the total for the series would be ${money_(reg)}. With your ${dt}, it's <strong>${money_(fin)}</strong>.<br>`
+              ? `${fmtLabel_(f)}: with the books you've entered so far, the total for the series, after your ${dt.replace(/ series discount$/, " discount")}, would be <strong>${money_(fin)}</strong>\u2014regularly ${money_(reg)}.<br>`
               : `${fmtLabel_(f)}: with the books you've entered so far, the series total is <strong>${money_(reg)}</strong>.<br>`;
           });
           html += `<span class="help">This updates on its own as you add books to the series or change a book's price.</span>`;
