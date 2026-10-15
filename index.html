@@ -674,7 +674,7 @@ const STEPS = {
       {key:"instagram", label:"Instagram profile name", type:"text", required:true, placeholder:"@"},
       {key:"bio", label:"Bio", type:"textarea", required:true},
       {key:"headshot", label:"Headshot", type:"file", required:true, help:"We'll use this for marketing. Upload a high-resolution photo (JPG or PNG)."},
-      {key:"logo", label:"Your logo (if you have one in a landscaped orientation, that would be best)", type:"file", help:"If you don't have one, skip this. PNG with a transparent background is preferred, but JPEG works too."}
+      {key:"logo", label:"Your logo (if you have one in a landscaped orientation, that would be best)", type:"file", help:"PNG with a transparent background is preferred, but JPEG works too."}
     ],
     next: () => "bingo-book"
   },
@@ -700,15 +700,7 @@ const STEPS = {
       {key:"heroineBook", label:"If you could be the heroine of any book (other than one of yours), which book would it be?", type:"text", autoCapitalize:true, help:"Feel free to elaborate on your choice, or just give the title."},
       {key:"readingFormat", label:"When you read for pleasure, you usually grab...", type:"radio", options:["A physical book","Kindle","Headphones for an audiobook","A solid mix of all that"]},
       {key:"sportsSong", label:"If you were a sports superstar, what song would you want played when you ran out onto the field?", type:"text", autoCapitalize:true},
-      {key:"contactPermission", label:"I may want to contact someone in your life (spouse, mom, friend, sister, etc) to get some fun inside info about you — nothing embarrassing! Do I have your permission to do that?", type:"radio", required:true, options:["Yes","No"]}
     ],
-    next: (d) => d.contactPermission === "Yes" ? "fun-stuff-cont" : "links"
-  },
-
-  "fun-stuff-cont": {
-    title: "Fun Stuff, cont.", icon: FLOURISH.heart,
-    sub: "Just a little contact info for the person I'll reach out to.",
-    customType: "contactInfo",
     next: () => "links"
   },
 
@@ -951,7 +943,7 @@ const STEPS = {
   "done": { title:"All Set!", done:true }
 };
 
-const STEP_ORDER = ["general-info","bingo-book","misc-fun","fun-stuff-cont","links","link-verification",
+const STEP_ORDER = ["general-info","bingo-book","misc-fun","links","link-verification",
   "book-signing-plan","preorder-payouts","preorder-books","books-selling",
   "swag","prizes","donation-knowledge","donation-titles","dropoff","social-media","notifications","final-comments"];
 
@@ -1393,6 +1385,52 @@ function seriesInfoMissing(b){
   if(!b || b.isSeries !== "Yes") return false;
   const n = parseFloat(b.seriesBookNumber), t = parseFloat(b.seriesTotalBooks);
   return !(n > 0) || !(t > 0);
+}
+// "missing" = Book X of Y blank; "single" = Book 1 of 1 (not really a series); null = fine.
+function seriesProblem(b){
+  if(b && b.bookKind === "") return "kind";
+  if(seriesInfoMissing(b)) return "missing";
+  if(b && b.isSeries === "Yes" && parseFloat(b.seriesTotalBooks) === 1) return "single";
+  return null;
+}
+function deselectSeries(b){
+  b.isSeries = "No";
+  b.seriesName = ""; b.seriesBookNumber = ""; b.seriesTotalBooks = "";
+  b.seriesRegularPrice = ""; b.seriesSoireePrice = "";
+  b.seriesFormats = []; b.seriesFormatPrices = {}; b.seriesDiscount = null;
+  b.seriesHasCover = ""; b.seriesCoverUrl = ""; b.seriesCoverUploadedAt = null;
+  b._seriesPickMode = undefined;
+  try{ recomputeSeriesPrices(); }catch(e){}
+}
+function showSingleSeriesModal(onYes, onNo){
+  const overlay = document.createElement('div');
+  overlay.className = "info-modal-overlay";
+  const cardEl = document.createElement('div');
+  cardEl.className = "info-modal-card";
+  const text = document.createElement('div');
+  text.className = "info-modal-text";
+  text.textContent = "A series needs more than one book. Are you sure this is a series?";
+  cardEl.appendChild(text);
+  const row = document.createElement('div');
+  row.style.cssText = "display:flex;gap:10px;justify-content:center;flex-wrap:wrap;";
+  const yes = document.createElement('button');
+  yes.className = "btn btn-primary btn-compact"; yes.textContent = "Yes";
+  yes.onclick = () => { overlay.remove(); if(onYes) onYes(); };
+  const no = document.createElement('button');
+  no.className = "btn btn-secondary btn-compact"; no.textContent = "No";
+  no.onclick = () => { overlay.remove(); if(onNo) onNo(); };
+  row.appendChild(yes); row.appendChild(no);
+  cardEl.appendChild(row);
+  overlay.appendChild(cardEl);
+  document.body.appendChild(overlay);
+}
+function flashField(el){
+  if(!el) return;
+  el.scrollIntoView({block:"center", behavior:"smooth"});
+  el.focus({preventScroll:true});
+  try{ el.select(); }catch(e){}
+  el.style.outline = "2px solid var(--terracotta)";
+  setTimeout(()=>{ el.style.outline = ""; }, 4000);
 }
 function showSeriesInfoModal(onClose){
   const overlay = document.createElement('div');
@@ -2235,7 +2273,7 @@ function computeChecklist(){
        done:isFieldFilled("instagram"), required:true, target:"general-info"},
       {label:"Bio", done:isFieldFilled("bio"), required:true, target:"general-info"},
       {label:"Headshot", done:isFieldFilled("headshot","file"), required:true, target:"general-info"},
-      {label:"Your logo", done:isFieldFilled("logo","file"), required:false, optionalTag:true, target:"general-info"},
+      {label:"Your logo", preview: (!isFieldFilled("logo","file") && linkStatusOf("logo") === "none") ? "No logo" : null, done:isFieldFilled("logo","file") || linkStatusOf("logo") === "none", required:false, optionalTag:true, target:"general-info"},
     ]
   });
 
@@ -2263,22 +2301,6 @@ function computeChecklist(){
       {label:"Entry song", preview: isFieldFilled("sportsSong") ? truncatePreview(d.sportsSong, 40) : null, done:isFieldFilled("sportsSong"), required:false, target:"misc-fun"},
     ]
   });
-
-  // ---- Contact info for fun facts (only relevant, and required, once
-  // they've said Yes to being contacted — relationship stays optional). ----
-  if(d.contactPermission === "Yes"){
-    sections.push({
-      title: "Contact Info for Fun Facts",
-      rows: [
-        {label:"Contact's name", preview: isFieldFilled("contactName") ? truncatePreview(d.contactName, 40) : null,
-         done:isFieldFilled("contactName"), required:true, target:"fun-stuff-cont"},
-        {label:"Contact's relationship to you", preview: isFieldFilled("contactRelationship") ? truncatePreview(d.contactRelationship, 40) : null,
-         done:isFieldFilled("contactRelationship"), required:false, target:"fun-stuff-cont"},
-        {label:"Contact info (phone or email)", preview: isFieldFilled("contactInfo") ? truncatePreview(d.contactInfo, 40) : null,
-         done:isFieldFilled("contactInfo"), required:true, target:"fun-stuff-cont"}
-      ]
-    });
-  }
 
   // ---- Links (optional, shared with all attendees) ----
   const linkFields = [
@@ -2951,12 +2973,6 @@ function renderSection(){
   if(step.customType === "notifications"){
     app.removeChild(app.lastChild); // remove the logo lockup we just added; renderNotifications adds its own
     renderNotifications(step);
-    return;
-  }
-
-  if(step.customType === "contactInfo"){
-    app.removeChild(app.lastChild); // remove the logo lockup we just added; renderContactInfo adds its own
-    renderContactInfo(step);
     return;
   }
 
@@ -4289,6 +4305,7 @@ function emptyPreorderBook(){
     id: 'pb_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8),
     title: "", regularPrice: "", soireePrice: "", tagLine: "", blurb: "",
     coverUrl: "", coverUploadedAt: null,
+    bookKind: "", specialEditionNote: "",
     isSeries: "", seriesName: "", seriesBookNumber: "", seriesTotalBooks: "",
     seriesRegularPrice: "", seriesSoireePrice: "",
     _expanded: true
@@ -4609,16 +4626,23 @@ function renderPreorderBooks(step){
   }
 
   // Block leaving/saving this screen while a series book is missing "Book X of Y".
-  function guardSeriesInfo(){
-    const bad = currentData.preorderBooksList.find(b => b && b.title && b.title.trim() && seriesInfoMissing(b));
+  function guardSeriesInfo(retry){
+    const bad = currentData.preorderBooksList.find(b => b && b.title && b.title.trim() && seriesProblem(b));
     if(!bad) return false;
     currentData.preorderBooksList.forEach(b => { b._expanded = false; });
     bad._expanded = true;
     renderEntries();
-    showSeriesInfoModal(()=>{
-      const el = entriesWrap.querySelector(`[data-book-entry-id="${bad.id}"] [data-series-num]`);
-      if(el){ el.scrollIntoView({block:"center", behavior:"smooth"}); el.focus({preventScroll:true}); el.style.outline = "2px solid var(--terracotta)"; setTimeout(()=>{ el.style.outline = ""; }, 4000); }
-    });
+    const entryEl = () => entriesWrap.querySelector(`[data-book-entry-id="${bad.id}"]`);
+    if(seriesProblem(bad) === "kind"){
+      showInfoModal("Please choose whether this is an individual book or a box set before saving.");
+    } else if(seriesProblem(bad) === "missing"){
+      showSeriesInfoModal(()=> flashField(entryEl() && entryEl().querySelector('[data-series-num]')));
+    } else {
+      showSingleSeriesModal(
+        ()=> flashField(entryEl() && entryEl().querySelector('[data-series-total]')),
+        ()=>{ deselectSeries(bad); renderEntries(); if(retry) retry(); }
+      );
+    }
     return true;
   }
 
@@ -4658,7 +4682,7 @@ function renderPreorderBooks(step){
     previewLink.style.cssText = "margin-top:6px;margin-left:10px;";
     previewLink.textContent = "Preview my Presale Listing";
     previewLink.onclick = async () => {
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(previewLink.onclick)) return;
       await saveAuthorData(currentAuthor, currentData);
       currentScreen = "preorder-preview";
       render();
@@ -4674,7 +4698,7 @@ function renderPreorderBooks(step){
     storeLink.style.cssText = "margin-top:6px;margin-left:10px;";
     storeLink.textContent = "See the Soirée Storefront";
     storeLink.onclick = async () => {
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(storeLink.onclick)) return;
       const w = window.open("", "_blank");
       try{ await saveAuthorData(currentAuthor, currentData); }catch(e){}
       const url = "https://bookishsummersoiree.github.io/BSS-Storefront/";
@@ -4707,16 +4731,16 @@ function renderPreorderBooks(step){
     back.className = "btn btn-secondary btn-tiny";
     back.textContent = "\u2190 Back";
     back.onclick = async () => {
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(back.onclick)) return;
       await saveAuthorData(currentAuthor, currentData);
       goBackSection();
     };
     const saveNext = document.createElement('button');
     saveNext.className = "btn btn-primary btn-compact";
     saveNext.textContent = "Yes, save & continue";
-    saveNext.onclick = () => { if(guardSeriesInfo()) return; advanceStep(step); };
+    saveNext.onclick = () => { if(guardSeriesInfo(saveNext.onclick)) return; advanceStep(step); };
     async function saveExitHandler(){
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(saveExitHandler)) return;
       await saveAuthorData(currentAuthor, currentData);
       showToast("Saved!");
       currentScreen = "home";
@@ -4743,7 +4767,7 @@ function renderPreorderBooks(step){
       const nextSectionLink = document.createElement('div');
       nextSectionLink.className = "home-link";
       nextSectionLink.textContent = "Save & go to the next section";
-      nextSectionLink.onclick = () => { if(guardSeriesInfo()) return; cameFromNavSubmenu = false; advanceStep(step); };
+      nextSectionLink.onclick = () => { if(guardSeriesInfo(nextSectionLink.onclick)) return; cameFromNavSubmenu = false; advanceStep(step); };
       card.appendChild(nextSectionLink);
     }
 
@@ -4751,7 +4775,7 @@ function renderPreorderBooks(step){
     firstLink.className = "home-link";
     firstLink.textContent = cameFromWhatsLeft ? "Save & return to To-Do list" : "Save & choose a different section";
     firstLink.onclick = async () => {
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(firstLink.onclick)) return;
       await saveAuthorData(currentAuthor, currentData);
       if(cameFromWhatsLeft){
         cameFromWhatsLeft = false;
@@ -4767,7 +4791,7 @@ function renderPreorderBooks(step){
     homeLink.className = "home-link";
     homeLink.textContent = "Save & return to home screen";
     homeLink.onclick = async () => {
-      if(guardSeriesInfo()) return;
+      if(guardSeriesInfo(homeLink.onclick)) return;
       await saveAuthorData(currentAuthor, currentData);
       cameFromWhatsLeft = false;
       cameFromNavSubmenu = false;
@@ -5159,7 +5183,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   // leaving the author to wonder whether anything they typed actually
   // stuck until they reach the very bottom of the whole screen.
   async function collapseAndSave(){
-    if(blockSeriesInfo()) return;
+    if(blockSeriesInfo(collapseAndSave)) return;
     await saveAuthorData(currentAuthor, currentData);
     showToast("Saved!");
     book._expanded = false;
@@ -5167,12 +5191,19 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   }
 
   // Returns true (and shows the popup) when this book is in a series but "Book X of Y" is blank.
-  function blockSeriesInfo(){
-    if(!seriesInfoMissing(book)) return false;
-    showSeriesInfoModal(()=>{
-      const el = wrap.querySelector('[data-series-num]');
-      if(el){ el.scrollIntoView({block:"center", behavior:"smooth"}); el.focus({preventScroll:true}); el.style.outline = "2px solid var(--terracotta)"; setTimeout(()=>{ el.style.outline = ""; }, 4000); }
-    });
+  function blockSeriesInfo(retry){
+    const prob = seriesProblem(book);
+    if(!prob) return false;
+    if(prob === "kind"){
+      showInfoModal("Please choose whether this is an individual book or a box set before saving.");
+    } else if(prob === "missing"){
+      showSeriesInfoModal(()=> flashField(wrap.querySelector('[data-series-num]')));
+    } else {
+      showSingleSeriesModal(
+        ()=> flashField(wrap.querySelector('[data-series-total]')),
+        ()=>{ deselectSeries(book); onChange(); if(retry) retry(); }
+      );
+    }
     return true;
   }
 
@@ -5207,36 +5238,47 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   // freshly-released book, shown as a little burst on the storefront). ----
   const newTagField = document.createElement('div');
   newTagField.className = "field";
-  newTagField.innerHTML = `<label>Do you want to add a "New!" tag to this book?</label><div class="help">Shows a little "New!" badge on the storefront to help attendees spot it.</div>`;
-  const newTagRow = document.createElement('div');
-  newTagRow.className = "btn-row";
-  newTagRow.style.marginTop = "4px";
-  const newTagYesBtn = document.createElement('button');
-  newTagYesBtn.type = "button";
-  newTagYesBtn.textContent = "Yes";
-  const newTagNoBtn = document.createElement('button');
-  newTagNoBtn.type = "button";
-  newTagNoBtn.textContent = "No";
-  function styleNewTagToggle(){
-    newTagYesBtn.className = "btn btn-compact " + (book.isNewTag === "Yes" ? "btn-primary" : "btn-secondary");
-    newTagNoBtn.className = "btn btn-compact " + (book.isNewTag === "No" ? "btn-primary" : "btn-secondary");
-  }
-  newTagYesBtn.onclick = () => { book.isNewTag = "Yes"; styleNewTagToggle(); };
-  newTagNoBtn.onclick = () => { book.isNewTag = "No"; styleNewTagToggle(); };
-  styleNewTagToggle();
-  newTagRow.appendChild(newTagYesBtn);
-  newTagRow.appendChild(newTagNoBtn);
-  newTagField.appendChild(newTagRow);
+  newTagField.innerHTML = `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:normal"><input type="checkbox" style="width:auto;margin:0"> <span>Add a "New!" tag to this book</span></label>`;
+  const newTagBox = newTagField.querySelector('input');
+  newTagBox.checked = book.isNewTag === "Yes";
+  newTagBox.onchange = () => { book.isNewTag = newTagBox.checked ? "Yes" : "No"; };
   wrap.appendChild(newTagField);
 
-  // ---- Formats this book comes in ----
+  // ---- Individual book or box set? ----
   ensureBookFormats(book);
+  if(book.bookKind === undefined){
+    // Books saved before this question existed: work it out from their formats.
+    book.bookKind = book.formats.indexOf("boxSet") !== -1 ? "boxset" : "individual";
+    if(book.bookKind === "boxset"){
+      book.formats = ["boxSet"];
+      const keepBox = (book.formatPrices && book.formatPrices.boxSet) || {regular:"", soiree:""};
+      book.formatPrices = { boxSet: keepBox };
+    }
+  }
+  const kindField = document.createElement('div');
+  kindField.className = "field";
+  kindField.innerHTML = `<label>Is this an individual book or a box set?</label>`;
+  const kindRow = document.createElement('div');
+  kindRow.className = "btn-row";
+  kindRow.style.marginTop = "4px";
+  const kindIndBtn = document.createElement('button');
+  kindIndBtn.type = "button"; kindIndBtn.textContent = "Individual book";
+  const kindBoxBtn = document.createElement('button');
+  kindBoxBtn.type = "button"; kindBoxBtn.textContent = "Box set";
+  kindRow.appendChild(kindIndBtn); kindRow.appendChild(kindBoxBtn);
+  kindField.appendChild(kindRow);
+  wrap.appendChild(kindField);
+
+  // ---- Formats this book comes in ----
   const formatsField = document.createElement('div');
   formatsField.className = "field";
   formatsField.innerHTML = `<label>Select all formats this book comes in</label>`;
   const formatsRow = document.createElement('div');
   formatsRow.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;";
   formatsField.appendChild(formatsRow);
+  const specialNoteWrap = document.createElement('div');
+  specialNoteWrap.style.marginTop = "10px";
+  formatsField.appendChild(specialNoteWrap);
   wrap.appendChild(formatsField);
 
   const pricesWrap = document.createElement('div');
@@ -5477,7 +5519,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
   function renderFormatCheckboxes(){
     formatsRow.innerHTML = "";
-    BOOK_FORMAT_OPTIONS.forEach(opt=>{
+    BOOK_FORMAT_OPTIONS.filter(o => o.value !== "boxSet").forEach(opt=>{
       const lbl = document.createElement('label');
       lbl.style.cssText = "display:flex;align-items:center;gap:6px;font-family:'Lora',serif;font-size:14px;cursor:pointer;";
       const cb = document.createElement('input');
@@ -5499,6 +5541,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         renderFormatPrices();
         renderSameCoverQuestion();
         renderCovers();
+        renderSpecialNote();
         applyBoxSetRule();
       });
       lbl.appendChild(cb);
@@ -5507,10 +5550,69 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     });
   }
 
+  function renderSpecialNote(){
+    specialNoteWrap.innerHTML = "";
+    if(book.bookKind !== "individual" || book.formats.indexOf("specialEdition") === -1) return;
+    const lab = document.createElement('label');
+    lab.textContent = "Why is this a special edition? (example: sprayed edges)";
+    const inp = document.createElement('input');
+    inp.type = "text"; inp.placeholder = "e.g. sprayed edges";
+    inp.value = book.specialEditionNote || "";
+    inp.addEventListener('input', ()=>{ book.specialEditionNote = inp.value; });
+    specialNoteWrap.appendChild(lab); specialNoteWrap.appendChild(inp);
+  }
+
+  // Individual book vs box set: a box set is its own thing (no other formats,
+  // never part of a series); an individual book picks paperback / hardcover /
+  // special edition.
+  function styleKindBtns(){
+    kindIndBtn.className = "btn btn-compact " + (book.bookKind === "individual" ? "btn-primary" : "btn-secondary");
+    kindBoxBtn.className = "btn btn-compact " + (book.bookKind === "boxset" ? "btn-primary" : "btn-secondary");
+  }
+  function applyKindVisibility(){
+    const answered = book.bookKind === "individual" || book.bookKind === "boxset";
+    formatsField.style.display = book.bookKind === "individual" ? "" : "none";
+    pricesWrap.style.display = answered ? "" : "none";
+    soireeWrap.style.display = answered ? "" : "none";
+    sameCoverField.style.display = (answered && bookFormatList(book).length > 1) ? "" : "none";
+    coverWrap.style.display = answered ? "" : "none";
+  }
+  function setKind(k){
+    book.bookKind = k;
+    book.formatPrices = book.formatPrices || {};
+    if(k === "boxset"){
+      const keep = book.formatPrices.boxSet || {regular:"", soiree:""};
+      book.formats = ["boxSet"];
+      book.formatPrices = { boxSet: keep };
+      book.formatCovers = {};
+      book.sameCoverForFormats = "";
+      book.specialEditionNote = "";
+    } else {
+      book.formats = book.formats.filter(f => f !== "boxSet");
+      if(!book.formats.length) book.formats = ["paperback"];
+      delete book.formatPrices.boxSet;
+    }
+    ensureBookFormats(book);
+    styleKindBtns();
+    renderFormatCheckboxes();
+    renderFormatPrices();
+    renderSameCoverQuestion();
+    renderCovers();
+    renderSpecialNote();
+    applyKindVisibility();
+    applyBoxSetRule();
+    recomputeSeriesPrices();
+  }
+  kindIndBtn.onclick = () => setKind("individual");
+  kindBoxBtn.onclick = () => setKind("boxset");
+
   renderFormatCheckboxes();
   renderFormatPrices();
   renderSameCoverQuestion();
   renderCovers();
+  renderSpecialNote();
+  styleKindBtns();
+  applyKindVisibility();
 
   const seriesField = document.createElement('div');
   seriesField.className = "field";
@@ -5662,7 +5764,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     totalInp.min = "1";
     totalInp.style.width = "70px";
     totalInp.placeholder = "#";
-    totalInp.value = book.seriesTotalBooks || "";
+    totalInp.value = book.seriesTotalBooks || ""; totalInp.setAttribute("data-series-total","1");
     totalInp.addEventListener('input', ()=>{ book.seriesTotalBooks = totalInp.value; });
     numRow.appendChild(bookLabel);
     numRow.appendChild(bookNumInp);
@@ -6091,7 +6193,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   saveBookBtn.textContent = "Save";
   saveBookBtn.onclick = () => {
     if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
-    if(seriesInfoMissing(book)){ blockSeriesInfo(); return; }
+    if(seriesProblem(book)){ blockSeriesInfo(saveBookBtn.onclick); return; }
     saveBookBtn.className = "btn btn-primary btn-compact";
     collapseAndSave();
   };
@@ -6101,7 +6203,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   saveAddBtn.textContent = "Save and add another book";
   saveAddBtn.onclick = async () => {
     if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
-    if(blockSeriesInfo()) return;
+    if(blockSeriesInfo(saveAddBtn.onclick)) return;
     saveAddBtn.className = "btn btn-primary btn-compact";
     await saveAuthorData(currentAuthor, currentData);
     showToast("Saved!");
@@ -6397,7 +6499,8 @@ function renderPreorderPreview(){
     grid.style.cssText = "display:flex;flex-direction:column;gap:14px;margin-top:8px;";
     books.forEach(book => {
       ensureBookFormats(book);
-      const formatLabels = {paperback:"Paperback", hardcover:"Hardcover", specialEdition:"Special Edition"};
+      const sNote = (book.specialEditionNote || "").trim();
+      const formatLabels = {paperback:"Paperback", hardcover:"Hardcover", specialEdition:"Special Edition" + (sNote ? ": " + sNote.charAt(0).toUpperCase() + sNote.slice(1) : ""), boxSet:"Box Set"};
       const soireeNote = `<span style="font-size:11px;color:#777;font-weight:400;">(special Soirée pricing)</span>`;
       const priceLines = bookFormatList(book).map(f=>{
         const fp = bookFormatPrice(book, f);
@@ -7274,7 +7377,7 @@ function formatTimeDisplay(t){
 
 function notifOptionalGaps(){
   const gaps = [];
-  if(!isFieldFilled("logo", "file")) gaps.push({key:"logo", label:"Add your logo"});
+  if(!isFieldFilled("logo", "file") && linkStatusOf("logo") !== "none") gaps.push({key:"logo", label:"Add your logo"});
   if(MISC_FUN_KEYS.some(k => !isFieldFilled(k))) gaps.push({key:"miscFun", label:'The Misc Fun Stuff (those were the fun questions like "If you were to write a cheesy musical about your life, what would it be called?")'});
   const linksMarkedDone = currentData.linksListStatus === "That is all the links I will be adding (will mark this completed on your To-Do list)";
   if(NOTIF_LINKS_KEYS.some(k => !isFieldFilled(k) && linkStatusOf(k) !== "none" && (linkStatusOf(k) === "later" || !linksMarkedDone))) gaps.push({key:"links", label:"Links to places readers can find you"});
@@ -8040,6 +8143,13 @@ function renderField(f){
   const label = document.createElement('label');
   label.innerHTML = f.label + (f.required ? ' <span class="req">*</span>' : '');
   if(f.label) wrap.appendChild(label);
+  // Link fields: the "later"/"don't have it" buttons sit right under the link's name.
+  let linkRow = null;
+  if(f.linkStatus){
+    linkRow = document.createElement('div');
+    linkRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px;";
+    wrap.appendChild(linkRow);
+  }
   if(f.help || f.helpHtml){
     const help = document.createElement('div');
     help.className = "help";
@@ -8055,6 +8165,19 @@ function renderField(f){
     wrap.appendChild(ta);
   } else if(f.type === "file"){
     wrap.appendChild(buildFileUpload(f));
+    if(f.key === "logo" && !isFieldFilled("logo","file")){
+      const nb = document.createElement('button');
+      nb.type = "button"; nb.textContent = "I don't have a logo";
+      const paintNb = () => {
+        const on = linkStatusOf("logo") === "none";
+        nb.style.cssText = "font-size:12px;padding:4px 10px;border-radius:999px;cursor:pointer;font-family:inherit;line-height:1.3;margin-top:6px;"
+          + "border:1px solid " + (on ? "var(--terracotta,#E4593F)" : "rgba(12,30,61,0.2)") + ";"
+          + "background:" + (on ? "rgba(228,89,63,0.12)" : "transparent") + ";color:inherit;opacity:" + (on ? "1" : ".75") + ";";
+      };
+      nb.onclick = () => { setLinkStatus("logo", linkStatusOf("logo") === "none" ? "" : "none"); paintNb(); };
+      paintNb();
+      wrap.appendChild(nb);
+    }
   } else if(f.type === "radio"){
     const group = document.createElement('div');
     group.className = "radio-group";
@@ -8104,8 +8227,7 @@ function renderField(f){
     if(f.linkStatus){
       // Two small, quiet choices instead of "leave blank": one keeps the link
       // on the author's To-Do list, the other takes it off.
-      const row = document.createElement('div');
-      row.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;";
+      const row = linkRow;
       const mkb = (label, val) => {
         const b = document.createElement('button');
         b.type = "button"; b.textContent = label; b.dataset.val = val;
@@ -8126,7 +8248,6 @@ function renderField(f){
       row.appendChild(laterB); row.appendChild(noneB);
       inp.addEventListener('input', () => { if(inp.value.trim()) setLinkStatus(f.key, ""); paint(); });
       paint();
-      wrap.appendChild(row);
     }
   }
   return wrap;
