@@ -1388,6 +1388,30 @@ function showInfoModal(message){
   document.body.appendChild(overlay);
 }
 
+// A book that is part of a series needs "Book X of Y" before it can be saved.
+function seriesInfoMissing(b){
+  if(!b || b.isSeries !== "Yes") return false;
+  const n = parseFloat(b.seriesBookNumber), t = parseFloat(b.seriesTotalBooks);
+  return !(n > 0) || !(t > 0);
+}
+function showSeriesInfoModal(onClose){
+  const overlay = document.createElement('div');
+  overlay.className = "info-modal-overlay";
+  const cardEl = document.createElement('div');
+  cardEl.className = "info-modal-card";
+  const text = document.createElement('div');
+  text.className = "info-modal-text";
+  text.innerHTML = "Series information: <strong>Book ___ of ___</strong> is needed to be able to save this book.";
+  cardEl.appendChild(text);
+  const btn = document.createElement('button');
+  btn.className = "btn btn-primary btn-compact";
+  btn.textContent = "Got it";
+  btn.onclick = () => { overlay.remove(); if(onClose) onClose(); };
+  cardEl.appendChild(btn);
+  overlay.appendChild(cardEl);
+  document.body.appendChild(overlay);
+}
+
 function render(){
   app.innerHTML = "";
   if(currentScreen === "author-select") renderAuthorSelect();
@@ -4584,6 +4608,20 @@ function renderPreorderBooks(step){
     statusToggle.style.display = hasAnyPreorderTitle() ? "" : "none";
   }
 
+  // Block leaving/saving this screen while a series book is missing "Book X of Y".
+  function guardSeriesInfo(){
+    const bad = currentData.preorderBooksList.find(b => b && b.title && b.title.trim() && seriesInfoMissing(b));
+    if(!bad) return false;
+    currentData.preorderBooksList.forEach(b => { b._expanded = false; });
+    bad._expanded = true;
+    renderEntries();
+    showSeriesInfoModal(()=>{
+      const el = entriesWrap.querySelector(`[data-book-entry-id="${bad.id}"] [data-series-num]`);
+      if(el){ el.scrollIntoView({block:"center", behavior:"smooth"}); el.focus({preventScroll:true}); el.style.outline = "2px solid var(--terracotta)"; setTimeout(()=>{ el.style.outline = ""; }, 4000); }
+    });
+    return true;
+  }
+
   function renderEntries(){
     entriesWrap.innerHTML = "";
     currentData.preorderBooksList.forEach((book, i) => {
@@ -4620,6 +4658,7 @@ function renderPreorderBooks(step){
     previewLink.style.cssText = "margin-top:6px;margin-left:10px;";
     previewLink.textContent = "Preview my Presale Listing";
     previewLink.onclick = async () => {
+      if(guardSeriesInfo()) return;
       await saveAuthorData(currentAuthor, currentData);
       currentScreen = "preorder-preview";
       render();
@@ -4635,6 +4674,7 @@ function renderPreorderBooks(step){
     storeLink.style.cssText = "margin-top:6px;margin-left:10px;";
     storeLink.textContent = "See the Soirée Storefront";
     storeLink.onclick = async () => {
+      if(guardSeriesInfo()) return;
       const w = window.open("", "_blank");
       try{ await saveAuthorData(currentAuthor, currentData); }catch(e){}
       const url = "https://bookishsummersoiree.github.io/BSS-Storefront/";
@@ -4667,14 +4707,16 @@ function renderPreorderBooks(step){
     back.className = "btn btn-secondary btn-tiny";
     back.textContent = "\u2190 Back";
     back.onclick = async () => {
+      if(guardSeriesInfo()) return;
       await saveAuthorData(currentAuthor, currentData);
       goBackSection();
     };
     const saveNext = document.createElement('button');
     saveNext.className = "btn btn-primary btn-compact";
     saveNext.textContent = "Yes, save & continue";
-    saveNext.onclick = () => advanceStep(step);
+    saveNext.onclick = () => { if(guardSeriesInfo()) return; advanceStep(step); };
     async function saveExitHandler(){
+      if(guardSeriesInfo()) return;
       await saveAuthorData(currentAuthor, currentData);
       showToast("Saved!");
       currentScreen = "home";
@@ -4701,7 +4743,7 @@ function renderPreorderBooks(step){
       const nextSectionLink = document.createElement('div');
       nextSectionLink.className = "home-link";
       nextSectionLink.textContent = "Save & go to the next section";
-      nextSectionLink.onclick = () => { cameFromNavSubmenu = false; advanceStep(step); };
+      nextSectionLink.onclick = () => { if(guardSeriesInfo()) return; cameFromNavSubmenu = false; advanceStep(step); };
       card.appendChild(nextSectionLink);
     }
 
@@ -4709,6 +4751,7 @@ function renderPreorderBooks(step){
     firstLink.className = "home-link";
     firstLink.textContent = cameFromWhatsLeft ? "Save & return to To-Do list" : "Save & choose a different section";
     firstLink.onclick = async () => {
+      if(guardSeriesInfo()) return;
       await saveAuthorData(currentAuthor, currentData);
       if(cameFromWhatsLeft){
         cameFromWhatsLeft = false;
@@ -4724,6 +4767,7 @@ function renderPreorderBooks(step){
     homeLink.className = "home-link";
     homeLink.textContent = "Save & return to home screen";
     homeLink.onclick = async () => {
+      if(guardSeriesInfo()) return;
       await saveAuthorData(currentAuthor, currentData);
       cameFromWhatsLeft = false;
       cameFromNavSubmenu = false;
@@ -5115,10 +5159,21 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   // leaving the author to wonder whether anything they typed actually
   // stuck until they reach the very bottom of the whole screen.
   async function collapseAndSave(){
+    if(blockSeriesInfo()) return;
     await saveAuthorData(currentAuthor, currentData);
     showToast("Saved!");
     book._expanded = false;
     onChange();
+  }
+
+  // Returns true (and shows the popup) when this book is in a series but "Book X of Y" is blank.
+  function blockSeriesInfo(){
+    if(!seriesInfoMissing(book)) return false;
+    showSeriesInfoModal(()=>{
+      const el = wrap.querySelector('[data-series-num]');
+      if(el){ el.scrollIntoView({block:"center", behavior:"smooth"}); el.focus({preventScroll:true}); el.style.outline = "2px solid var(--terracotta)"; setTimeout(()=>{ el.style.outline = ""; }, 4000); }
+    });
+    return true;
   }
 
   function makeCollapseRow(){
@@ -5243,7 +5298,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       help.innerHTML = "Optional \u2014 leave blank and the regular price shows instead. ";
       const auto = document.createElement('a');
       auto.href = "#"; auto.textContent = "Work it out for me instead";
-      auto.onclick = (e)=>{ e.preventDefault(); soireeEditing = true; renderSoireeBlock(); };
+      auto.onclick = (e)=>{ e.preventDefault(); window.__soireeStart = "kind"; soireeEditing = true; renderSoireeBlock(); };
       help.appendChild(auto);
       box.appendChild(help);
       bookFormatList(book).forEach(f=>{
@@ -5283,7 +5338,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     }
 
     // ---- setup conversation ----
-    let step = "ask", kind = "percent", amt = "", pend = null;
+    let step = window.__soireeStart || "ask", kind = "percent", amt = "", pend = null;
+    window.__soireeStart = null;
     function defText(d){ return d.type === "percent" ? (d.value + "% off") : (d.type === "dollar" ? ("$" + parseFloat(d.value).toFixed(2) + " off each book") : "no discount"); }
     const panel = document.createElement('div');
     panel.style.cssText = "background:#fff;border:1px solid rgba(12,30,61,0.12);border-left:4px solid var(--terracotta,#E4593F);border-radius:10px;padding:14px 16px;";
@@ -5537,6 +5593,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         book.seriesHasCover = "";
         book.seriesCoverUrl = "";
         book.seriesCoverUploadedAt = null;
+        book._focusSeriesName = true;
         renderSeriesDetails();
       }
 
@@ -5564,6 +5621,10 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
         nameInp.style.marginTop = "8px";
         nameInp.addEventListener('input', ()=>{ book.seriesName = nameInp.value; });
         nameField.appendChild(nameInp);
+        if(book._focusSeriesName){
+          book._focusSeriesName = false;
+          setTimeout(()=>{ try{ nameInp.focus(); }catch(e){} }, 0);
+        }
       }
     } else {
       book._seriesPickMode = "new";
@@ -5590,7 +5651,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     bookNumInp.min = "1";
     bookNumInp.style.width = "70px";
     bookNumInp.placeholder = "#";
-    bookNumInp.value = book.seriesBookNumber || "";
+    bookNumInp.value = book.seriesBookNumber || ""; bookNumInp.setAttribute("data-series-num","1");
     bookNumInp.addEventListener('input', ()=>{ book.seriesBookNumber = bookNumInp.value; });
     const ofSpan = document.createElement('span');
     ofSpan.textContent = "of";
@@ -5649,6 +5710,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       let pre = (brOk && !cur) ? "ask" : "done";
       if(cur && cur.type === "percent"){ choice = "discount"; mode = "percent"; amtVal = cur.value; }
       else if(cur && cur.type === "dollar"){ choice = "discount"; mode = "dollar"; amtVal = cur.value; }
+      else if(cur && (cur.type === "none" || cur.type === "books")){ choice = "none"; }
       function mk(label, primary, fn){
         const b = document.createElement('button');
         b.type = "button"; b.className = "btn btn-compact " + (primary ? "btn-primary" : "btn-secondary");
@@ -5671,9 +5733,9 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
       // here asks whether to change that default or only this series.
       function save(d){
         const def = seriesDefaultOf();
-        const same = def && d.type === def.type && String(parseFloat(d.value) || 0) === String(parseFloat(def.value) || 0);
-        if(def && !same && (d.type === "percent" || d.type === "dollar" || d.type === "none")){
-          const txt = def.type === "percent" ? (def.value + "% off") : (def.type === "dollar" ? ("$" + parseFloat(def.value).toFixed(2) + " off") : "no discount (just the books added up)");
+        const same = def && d.type === def.type && (d.type === "none" || d.type === "books" || String(parseFloat(d.value) || 0) === String(parseFloat(def.value) || 0));
+        if(def && !same && (d.type === "percent" || d.type === "dollar" || d.type === "none" || d.type === "books")){
+          const txt = def.type === "percent" ? (def.value + "% off") : (def.type === "dollar" ? ("$" + parseFloat(def.value).toFixed(2) + " off") : (def.type === "books" ? "your per-book Soir\u00e9e discount" : "no series discount (just the books added up)"));
           box.innerHTML = "";
           const q = document.createElement('div');
           q.style.cssText = "line-height:1.5;margin-bottom:12px;";
@@ -5705,7 +5767,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           return;
         }
         if(pre === "diff"){
-          q.innerHTML = `<strong>Your current discount per book is ${br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2))}. What would you like to change it to?</strong>`;
+          q.innerHTML = `<strong>Your current discount per book is ${br.type === "percent" ? (br.value + "%") : ("$" + parseFloat(br.value).toFixed(2))}. How would you like to change the discount on a series?</strong>`;
           box.appendChild(q);
           const mrow = document.createElement('div');
           mrow.appendChild(mk("% off", mode === "percent", ()=>{ mode = "percent"; draw(); }));
@@ -5713,7 +5775,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           box.appendChild(mrow);
           const q2 = document.createElement('div');
           q2.style.cssText = "line-height:1.5;margin:4px 0 8px;";
-          q2.textContent = mode === "percent" ? "What percentage off would you like?" : "How many dollars off would you like?";
+          q2.textContent = mode === "percent" ? "What percentage?" : "What dollar amount?";
           box.appendChild(q2);
           const inp = document.createElement('input');
           inp.type = "number"; inp.inputMode = mode === "percent" ? "numeric" : "decimal"; inp.step = mode === "percent" ? "1" : "0.01"; inp.min = "0";
@@ -5748,12 +5810,15 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           return;
         }
         q.innerHTML = "<strong>How would you like to price the whole series?</strong><br>"
-          + (total !== null ? `Adding up the books you've entered so far, the total is <strong>${money_(total)}</strong> (but this will automatically update if/when you add more books to the series).` : "Enter this book's price above and I'll add up the series for you (and it will automatically update if/when you add more books to the series).");
+          + (total !== null ? `Adding up books entered in this series so far, the total is <strong>${money_(total)}</strong> <em>(but this will automatically update if/when you add more books to the series)</em>.` : "Enter this book's price above and I'll add up the series for you <em>(and it will automatically update if/when you add more books to the series)</em>.");
         box.appendChild(q);
         const row = document.createElement('div');
-        row.appendChild(mk("Just add up my books", choice === "none", ()=>save({type:"none", value:""})));
-        row.appendChild(mk("Add them up, then discount the series", choice === "discount", ()=>{ choice = "discount"; draw(); }));
-        row.appendChild(mk("I'll set my own series price", false, ()=>save({type:"custom", value:""})));
+        row.appendChild(mk("Total sum of books in series (minus any per-book Soir\u00e9e discount if you set one)", choice === "none", ()=>{
+          const grpRule = seriesBooksFor(book).map(x => x.soireeDiscount).find(r => r && (r.type === "percent" || r.type === "dollar"));
+          save(grpRule ? {type:"books", value:grpRule.value, basis:grpRule.type} : {type:"none", value:""});
+        }));
+        row.appendChild(mk("Total sum of books in series (minus a new discount set specifically for series)", choice === "discount", ()=>{ choice = "discount"; draw(); }));
+        row.appendChild(mk("I'll set my own price for this series", false, ()=>save({type:"custom", value:""})));
         box.appendChild(row);
         if(choice === "discount"){
           const t = document.createElement('div');
@@ -6022,10 +6087,12 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   saveRow.style.cssText = "margin-top:14px;";
   const saveBookBtn = document.createElement('button');
   saveBookBtn.type = "button";
-  saveBookBtn.className = "btn btn-primary btn-compact";
+  saveBookBtn.className = "btn btn-secondary btn-compact";
   saveBookBtn.textContent = "Save";
   saveBookBtn.onclick = () => {
     if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
+    if(seriesInfoMissing(book)){ blockSeriesInfo(); return; }
+    saveBookBtn.className = "btn btn-primary btn-compact";
     collapseAndSave();
   };
   const saveAddBtn = document.createElement('button');
@@ -6034,6 +6101,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   saveAddBtn.textContent = "Save and add another book";
   saveAddBtn.onclick = async () => {
     if(!(book.title && book.title.trim())){ showToast("Add a title for this book first."); return; }
+    if(blockSeriesInfo()) return;
+    saveAddBtn.className = "btn btn-primary btn-compact";
     await saveAuthorData(currentAuthor, currentData);
     showToast("Saved!");
     currentData.preorderBooksList.forEach(b => { b._expanded = false; });
