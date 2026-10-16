@@ -4023,7 +4023,7 @@ function renderDonationTitles(step){
   doneWrap.style.cssText = "margin-top:26px;padding-top:22px;border-top:1px solid rgba(12,30,61,0.1);display:flex;flex-direction:column;gap:12px;align-items:stretch;";
   const doneBtn = document.createElement('button');
   doneBtn.type = "button";
-  doneBtn.className = "btn btn-primary btn-compact";
+  doneBtn.className = "btn btn-secondary btn-compact";
   doneBtn.style.cssText = "white-space:normal;";
   doneBtn.textContent = "These are all the prize(s) I will be donating";
   doneBtn.onclick = () => finishList("complete");
@@ -6177,7 +6177,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
   const blurbField = document.createElement('div');
   blurbField.className = "field";
-  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label><div class="help">Optional but encouraged. Select some text and tap B or I to add emphasis.</div>`;
+  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label><div class="help">Optional but encouraged. Select some text and tap B or I to add emphasis. You'll see little * marks around that text while you type; the box underneath shows how it will actually look.</div>`;
 
   const blurbToolbar = document.createElement('div');
   blurbToolbar.style.cssText = "display:flex;gap:6px;margin-bottom:6px;";
@@ -6200,10 +6200,19 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   const blurbTa = document.createElement('textarea');
   blurbTa.rows = 4;
   blurbTa.value = book.blurb || "";
-  blurbTa.addEventListener('input', ()=>{ book.blurb = blurbTa.value; });
-  blurbBoldBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "**"); });
-  blurbItalicBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "*"); });
+  const blurbPreview = document.createElement('div');
+  blurbPreview.style.cssText = "margin-top:8px;padding:10px 12px;border:1px dashed rgba(12,30,61,0.25);border-radius:8px;background:rgba(255,255,255,0.6);line-height:1.5;";
+  function updateBlurbPreview(){
+    const has = /\*/.test(blurbTa.value);
+    blurbPreview.style.display = has ? "" : "none";
+    blurbPreview.innerHTML = '<div style="font-size:12px;opacity:.6;margin-bottom:4px;">How it will look</div>' + renderFormattedBlurb(blurbTa.value);
+  }
+  blurbTa.addEventListener('input', ()=>{ book.blurb = blurbTa.value; updateBlurbPreview(); });
+  blurbBoldBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "**"); book.blurb = blurbTa.value; updateBlurbPreview(); });
+  blurbItalicBtn.addEventListener('click', ()=>{ wrapTextareaSelection(blurbTa, "*"); book.blurb = blurbTa.value; updateBlurbPreview(); });
   blurbField.appendChild(blurbTa);
+  blurbField.appendChild(blurbPreview);
+  updateBlurbPreview();
   wrap.appendChild(blurbField);
 
   // Tag line + blurb sit right under the prices, above the cover section.
