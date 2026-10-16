@@ -5349,7 +5349,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
     const money_ = n => "$" + (Math.round(n * 100) / 100).toFixed(2);
     function mk(label, primary, fn){
       const b = document.createElement('button');
-      b.type = "button"; b.className = "btn btn-compact " + (primary ? "btn-primary" : "btn-secondary");
+      b.type = "button"; b.className = "btn btn-compact " + "btn-secondary";
       b.style.cssText = "white-space:normal;margin:0 8px 8px 0;";
       b.textContent = label; b.onclick = fn; return b;
     }
@@ -5871,8 +5871,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           q.innerHTML = `<strong>You have set a default of ${txt} for all your series.</strong><br>Do you want to change the default, or change it only for this series?`;
           box.appendChild(q);
           const r = document.createElement('div');
-          r.appendChild(mk("Change the default for all series", true, ()=>saveAllSeries(d)));
-          r.appendChild(mk("Only this series", true, ()=>doSave(d)));
+          r.appendChild(mk("Change the default for all series", false, ()=>saveAllSeries(d)));
+          r.appendChild(mk("Only this series", false, ()=>doSave(d)));
           r.appendChild(mk("Never mind", false, ()=>draw()));
           box.appendChild(r);
           return;
@@ -5890,7 +5890,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           q.innerHTML = `<strong>Your books have a Soirée discount of ${dtxt}${br.type === "dollar" ? " off each book" : ""}.</strong><br>Would you like a special <em><u>series</u></em> discount that is deeper than the discount you already set up, to help people grab the whole series?`;
           box.appendChild(q);
           const r0 = document.createElement('div');
-          r0.appendChild(mk("Yes, a deeper series discount", true, ()=>{ pre = "diff"; draw(); }));
+          r0.appendChild(mk("Yes, a deeper series discount", false, ()=>{ pre = "diff"; draw(); }));
           r0.appendChild(mk("No, use the same discount", false, ()=>save({type:"books", value:br.value, basis:br.type})));
           box.appendChild(r0);
           return;
@@ -5930,8 +5930,8 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
             sq.style.cssText = "line-height:1.5;margin:6px 0 10px;";
             sq.innerHTML = "Do you want this discount to apply to <em>all</em> your series? Or just this one?";
             scopeBox.appendChild(sq);
-            scopeBox.appendChild(mk("All my series", true, ()=>saveAllSeries(d)));
-            scopeBox.appendChild(mk("Just this one", true, ()=>doSave({type:mode, value:amtVal})));
+            scopeBox.appendChild(mk("All my series", false, ()=>saveAllSeries(d)));
+            scopeBox.appendChild(mk("Just this one", false, ()=>doSave({type:mode, value:amtVal})));
           }
           inp.addEventListener('input', updD);
           box.appendChild(inp); box.appendChild(res); box.appendChild(scopeBox);
