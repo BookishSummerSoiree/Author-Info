@@ -1267,6 +1267,28 @@ async function saveAuthorData(author, data){
   } finally {
     hideSaveOverlay();
   }
+  reportProgressToHQ(author, data);
+}
+
+/* Tells HQ how far along this author's To-Do list is, so the Authors page in
+   HQ can show "To-Do list: 5/9". Fire-and-forget; never blocks saving. */
+const HQ_FIREBASE_URL = "https://soiree-prizes-2027-default-rtdb.firebaseio.com";
+function reportProgressToHQ(author, data){
+  try{
+    if(!author || author !== currentAuthor || data !== currentData || !currentData) return;
+    let total = 0, done = 0;
+    computeChecklist().forEach(s => s.rows.forEach(r => { if(r.required){ total++; if(r.done) done++; } }));
+    const slug = String(author).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const body = {
+      done, total,
+      prizes: currentData.prizesPlan === "I'll pass on donating prizes." ? "no" : "yes",
+      swag:   currentData.swagPlan   === "I'll pass on adding swag to the totes." ? "no" : "yes",
+      at: Date.now()
+    };
+    fetch(HQ_FIREBASE_URL + "/authorProgress/" + slug + ".json", {
+      method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+    }).catch(()=>{});
+  }catch(e){}
 }
 
 /* ---------- APP STATE ---------- */
