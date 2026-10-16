@@ -5481,6 +5481,12 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
           scopeBox.appendChild(mk("I'll decide with each book", true, ()=>done({type:kind, value:amt}, "each")));
         }
         inp.addEventListener('input', upd);
+        const sw = document.createElement('button');
+        sw.type = "button"; sw.className = "btn btn-secondary btn-tiny";
+        sw.style.cssText = "display:block;margin:0 0 10px;";
+        sw.textContent = kind === "percent" ? "Oops, I meant a dollar amount ($ off)" : "Oops, I meant a percentage (% off)";
+        sw.onclick = () => { kind = kind === "percent" ? "dollar" : "percent"; amt = ""; draw(); };
+        btns.appendChild(sw);
         btns.appendChild(inp); btns.appendChild(res); btns.appendChild(scopeBox);
         upd();
       } else if(step === "scope"){
