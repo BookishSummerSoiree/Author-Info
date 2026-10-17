@@ -1285,6 +1285,7 @@ async function saveAuthorData(author, data){
     hideSaveOverlay();
   }
   reportProgressToHQ(author, data);
+  syncDonatedPrizes(author, data);
 }
 
 /* Tells HQ how far along this author's To-Do list is, so the Authors page in
@@ -1306,6 +1307,176 @@ function reportProgressToHQ(author, data){
       method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
     }).catch(()=>{});
   }catch(e){}
+}
+
+/* ---------- DONATED PRIZES -> PRIZE MANAGER ----------
+   Every prize an author says they will donate is added to the Prize Manager
+   (category BINGO, donor = the author) automatically.
+   - Always item type Book. 2 copies of a title = 2 prizes. A whole series = 1 prize per copy.
+   - Amount paid is $0.
+   - Value = the regular (not Soirée) price when the book or series is listed
+     in their presale; otherwise it's left empty to fill in later.
+   - Changing the list later updates, adds or removes only prizes that are
+     still untouched in the Prize Manager. Anything edited there is left alone,
+     and a prize deleted there is never re-created. */
+const _donNorm = s => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+function donatedValueFor_(line, data){
+  const list = (data && data.preorderBooksList) || [];
+  const t = _donNorm(line.title);
+  if(!t) return 0;
+  const bookPrice = b => {
+    try{ ensureBookFormats(b); }catch(e){}
+    const order = ["paperback","hardcover"].concat(b.formats || []);
+    for(let i = 0; i < order.length; i++){
+      const fp = b.formatPrices && b.formatPrices[order[i]];
+      const r = parseFloat(fp && fp.regular);
+      if(!isNaN(r) && r > 0) return r;
+    }
+    const flat = parseFloat(b.regularPrice);
+    return !isNaN(flat) && flat > 0 ? flat : 0;
+  };
+  const sb = list.find(b => b && b.isSeries === "Yes" && _donNorm(b.seriesName) === t);
+  if(sb){
+    for(const f of ["paperback","hardcover"]){
+      let r = null;
+      try{ r = seriesSumForFormat(sb, f); }catch(e){}
+      if(r && r.counted > 0 && r.counted === r.entered && r.total > 0) return r.total;
+    }
+    const sr = parseFloat(sb.seriesRegularPrice);
+    return !isNaN(sr) && sr > 0 ? sr : 0;
+  }
+  const bk = list.find(b => b && _donNorm(b.title) === t);
+  return bk ? bookPrice(bk) : 0;
+}
+
+function desiredDonatedPrizes_(data){
+  const lines = {};
+  (data.donatedBooksList || []).forEach(e => {
+    if(!e || !e.title || !String(e.title).trim()) return;
+    const title = String(e.title).trim();
+    const kind = e.kind === "series" ? "series" : (e.kind === "book" ? "book" : "manual");
+    const base = (kind + "_" + _donNorm(title)).replace(/[^a-z0-9]+/g, "_");
+    let q = parseInt(e.qty, 10); if(!(q >= 1)) q = 1;
+    if(lines[base]) lines[base].qty += q;
+    else lines[base] = {base, kind, title, series:e.series || "", qty:q};
+  });
+  const out = [];
+  Object.keys(lines).forEach(k => {
+    const l = lines[k];
+    const value = donatedValueFor_(l, data);
+    const list = data.preorderBooksList || [];
+    let seriesBooks = 0;
+    if(l.kind === "series"){
+      const sb = list.find(b => b && b.isSeries === "Yes" && _donNorm(b.seriesName) === _donNorm(l.title));
+      seriesBooks = sb ? (parseInt(sb.seriesTotalBooks, 10) || list.filter(b => b && b.isSeries === "Yes" && _donNorm(b.seriesName) === _donNorm(l.title)).length) : 0;
+    }
+    for(let n = 1; n <= l.qty; n++){
+      out.push({key:l.base + "__" + n, title:l.title, kind:l.kind, isBook:true,
+                value, copy:n, total:l.qty, seriesBooks});
+    }
+  });
+  return out;
+}
+
+async function _fbReq(path, method, body){
+  const res = await fetch(HQ_FIREBASE_URL + "/" + path + ".json", {
+    method, headers:{"Content-Type":"application/json"}, body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if(!res.ok) throw new Error("Firebase " + method + " " + path + " " + res.status);
+  return method === "GET" ? res.json() : null;
+}
+
+function _prizeRecordFor(id, d, author, slug, data, now){
+  const bookish = d.isBook;
+  const notes = "Auto-added from Author Info."
+    + (d.kind === "series" ? " Whole series" + (d.seriesBooks ? " (" + d.seriesBooks + " books)." : ".") : "")
+    + (d.total > 1 ? " Copy " + d.copy + " of " + d.total + "." : "");
+  const rec = {
+    id, name: bookish ? (author + ": " + d.title) : d.title, cat:"BINGO", itemType: bookish ? "Book" : "Misc",
+    value: d.value || 0, paid: 0, qty: 1, loc:"", notes,
+    donorType:"author", donor:author, donorWebsite:String(data.linkWebsite || "").trim(), donorQRType:"website",
+    donorPronoun:"their", donorLogo:String(data.logoUrl || ""),
+    needTag:true, tagMade:false, tagPrinted:false, tagAttached:false, onTote:false, tagGenerated:false,
+    donationTagType: bookish ? "book" : "other",
+    source:"author-info", authorSlug:slug, donationKey:d.key,
+    _created:now, _mod:now
+  };
+  if(bookish){ rec.author = author; rec.bookTitle = d.title; }
+  return rec;
+}
+
+let _prizeSyncRunning = false, _prizeSyncAgain = null;
+const _prizeSyncSig = {};
+async function syncDonatedPrizes(author, data){
+  try{
+    if(!author || author !== currentAuthor || data !== currentData || !currentData) return;
+    if(!Array.isArray(data.donatedBooksList)) return;
+    const passed = data.prizesPlan === "I'll pass on donating prizes.";
+    const desired = passed ? [] : desiredDonatedPrizes_(data);
+    // Never wipe an author's prizes just because their list failed to load.
+    if(!desired.length && !passed && !data.donationListStatus) return;
+    const slug = String(author).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const sig = JSON.stringify([author, desired.map(d => [d.key, d.title, d.value, d.isBook, d.seriesBooks]), data.linkWebsite || "", data.logoUrl || ""]);
+    if(_prizeSyncSig[slug] === sig) return;
+    if(_prizeSyncRunning){ _prizeSyncAgain = [author, data]; return; }
+    _prizeSyncRunning = true;
+    try{
+      const map = (await _fbReq("authorPrizes/" + slug, "GET")) || {};
+      let slot = map.slot, next = map.next || 0;
+      const items = map.items || {};
+      if(!slot){
+        const all = (await _fbReq("authorPrizes", "GET")) || {};
+        const used = new Set(Object.keys(all).map(k => all[k] && all[k].slot));
+        let h = 0; for(let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) % 90000;
+        slot = h + 1;
+        while(used.has(slot)) slot = (slot % 90000) + 1;
+      }
+      const base = 1000000 + slot * 1000;
+      const now = Date.now();
+      const wanted = {}; desired.forEach(d => { wanted[d.key] = d; });
+
+      // Prizes no longer on the author's list
+      for(const key of Object.keys(items)){
+        if(wanted[key]) continue;
+        const id = items[key];
+        const rec = await _fbReq("prizes/p_" + id, "GET");
+        if(!rec){ delete items[key]; continue; }
+        if(rec._mod === rec._created && !rec.bundledInto && !rec.isBundle){
+          await _fbReq("prizes/p_" + id, "DELETE");
+        } else {
+          await _fbReq("prizes/p_" + id, "PATCH", {notes:(rec.notes ? rec.notes + " " : "") + "(The author took this off their list.)"});
+        }
+        delete items[key];
+      }
+      // Prizes on the list
+      for(const d of desired){
+        let id = items[d.key];
+        if(!id){
+          if(next >= 999) continue; // safety cap per author
+          next++; id = base + next;
+          await _fbReq("prizes/p_" + id, "PUT", _prizeRecordFor(id, d, author, slug, data, now));
+          items[d.key] = id;
+          continue;
+        }
+        const rec = await _fbReq("prizes/p_" + id, "GET");
+        if(!rec) continue; // deleted in the Prize Manager on purpose: leave it gone
+        const rebuilt = _prizeRecordFor(id, d, author, slug, data, rec._created || now);
+        if(rec._mod === rec._created){
+          await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, value:rebuilt.value, notes:rebuilt.notes,
+            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorLogo:rebuilt.donorLogo, donationTagType:rebuilt.donationTagType,
+            author:rebuilt.author || null, bookTitle:rebuilt.bookTitle || null});
+        } else if(!(+rec.value) && d.value){
+          await _fbReq("prizes/p_" + id, "PATCH", {value:d.value});
+        }
+      }
+      await _fbReq("authorPrizes/" + slug, "PUT", {slot, next, name:author, items, at:now});
+      _prizeSyncSig[slug] = sig;
+    } finally {
+      _prizeSyncRunning = false;
+      if(_prizeSyncAgain){ const a = _prizeSyncAgain; _prizeSyncAgain = null; syncDonatedPrizes(a[0], a[1]); }
+    }
+  }catch(e){ /* never blocks saving; it retries on the next save */ }
 }
 
 /* ---------- APP STATE ---------- */
