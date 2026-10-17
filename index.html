@@ -721,7 +721,8 @@ const STEPS = {
       {key:"linkYoutube", label:"YouTube", type:"url", linkStatus:true},
       {key:"linkBookbub", label:"BookBub", type:"url", linkStatus:true},
       {key:"linkSpotify", label:"Spotify", type:"url", linkStatus:true},
-      {key:"linkOther", label:"Name and link to anywhere else that's been missed", type:"text", help:"Example: Spotify, [link]"},
+      {key:"linkOtherName", label:"Anywhere else readers can find you? What's it called?", type:"text", autoCapitalize:true, placeholder:"Example: Goodreads, Patreon, Ko-fi", help:"Only if there's a place that isn't listed above. This name goes on its QR code."},
+      {key:"linkOtherUrl", label:"Link for that place", type:"url", linkStatus:true, laterLabel:"I have something else, but I'll come back to add it later", noneLabel:"I don't have anything else", help:"Paste the full web address, starting with https://"},
       {key:"linksListStatus", label:"", type:"radio", statusToggle:true, options:[
         "That is all the links I will be adding (will mark this completed on your To-Do list)",
         "I will be coming back and adding more links (will keep this active on your To-Do list)"
@@ -2328,7 +2329,7 @@ function computeChecklist(){
     ["linkWebsite","Website"], ["linkInstagram","Instagram"], ["linkFacebook","Facebook"],
     ["linkCatalogue","Book Catalogue"], ["linkNewsletter","Newsletter"], ["linkTiktok","TikTok"],
     ["linkThreads","Threads"], ["linkEtsy","Etsy"], ["linkPodcast","Podcast"],
-    ["linkYoutube","YouTube"], ["linkBookbub","BookBub"], ["linkSpotify","Spotify"], ["linkOther","Other"]
+    ["linkYoutube","YouTube"], ["linkBookbub","BookBub"], ["linkSpotify","Spotify"], ["linkOtherUrl", (d.linkOtherName||"").trim() || "Other"]
   ];
   // "That is all the links..." marks every link done regardless of whether
   // each one is individually filled in; otherwise each link's checkmark
@@ -3433,7 +3434,7 @@ function renderFixLinks(){
     row.style.marginBottom = "22px";
 
     const label = document.createElement('label');
-    label.textContent = f.label;
+    label.textContent = linkLabelOf(f);
     row.appendChild(label);
 
     const typed = document.createElement('div');
@@ -3488,6 +3489,10 @@ function renderFixLinks(){
 /* ---------- SCREEN: LINK VERIFICATION ---------- */
 let linkVerificationEditingKey = null;
 
+function linkLabelOf(f){
+  if(f.key === "linkOtherUrl") return ((currentData.linkOtherName || "").trim()) || "Other";
+  return f.label;
+}
 function linkVerificationFields(){
   return (STEPS["links"].fields || []).filter(f => f.type === "url" && currentData[f.key]);
 }
@@ -3561,7 +3566,7 @@ function renderLinkVerification(step){
         label.appendChild(check);
       }
       const labelText = document.createElement('span');
-      labelText.textContent = f.label;
+      labelText.textContent = linkLabelOf(f);
       label.appendChild(labelText);
       topLine.appendChild(label);
 
@@ -7399,7 +7404,7 @@ function renderPresaleOrders(){
 
 /* ---------- SCREEN: NOTIFICATIONS ---------- */
 const MISC_FUN_KEYS = ["drink","booksWritten","rentFreeBook","musicalTitle","numberGuess","heroineBook","readingFormat","sportsSong"];
-const NOTIF_LINKS_KEYS = ["linkWebsite","linkInstagram","linkFacebook","linkCatalogue","linkNewsletter","linkTiktok","linkThreads","linkPodcast","linkYoutube","linkBookbub","linkSpotify","linkOther"];
+const NOTIF_LINKS_KEYS = ["linkWebsite","linkInstagram","linkFacebook","linkCatalogue","linkNewsletter","linkTiktok","linkThreads","linkPodcast","linkYoutube","linkEtsy","linkBookbub","linkSpotify","linkOtherUrl"];
 
 function formatTimeDisplay(t){
   if(!t) return "";
@@ -8270,8 +8275,8 @@ function renderField(f){
         b.onclick = () => { setLinkStatus(f.key, linkStatusOf(f.key) === val ? "" : val); paint(); };
         return b;
       };
-      const laterB = mkb("I have this, but I'll come back to fill it in later", "later");
-      const noneB = mkb("I don't have this", "none");
+      const laterB = mkb(f.laterLabel || "I have this, but I'll come back to fill it in later", "later");
+      const noneB = mkb(f.noneLabel || "I don't have this", "none");
       function paint(){
         [laterB, noneB].forEach(b => {
           const on = linkStatusOf(f.key) === b.dataset.val;
@@ -8496,6 +8501,44 @@ function resizeImage(file, maxDim, mime, quality){
 }
 
 /* ---------- QR CODE GENERATION ---------- */
+// "Anywhere else" has no ready-made artwork, so its tile (circle, link icon
+// and the author's own name for it) is drawn on the spot in the same layout.
+const QR_OTHER_KEY = "linkOtherUrl";
+function qrKeysAll(){ return Object.keys(QR_TEMPLATES).concat([QR_OTHER_KEY]); }
+function buildOtherQrTemplate(name, color){
+  const c = document.createElement('canvas');
+  c.width = 1200; c.height = 1500;
+  const ctx = c.getContext('2d');
+  const cx = 194, cy = 1217, r = 158;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  // simple chain-link icon
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(-Math.PI/4);
+  ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 20; ctx.lineCap = "round";
+  const rr = (x,y,w,h,rad)=>{ ctx.beginPath(); ctx.moveTo(x+rad,y); ctx.arcTo(x+w,y,x+w,y+h,rad); ctx.arcTo(x+w,y+h,x,y+h,rad); ctx.arcTo(x,y+h,x,y,rad); ctx.arcTo(x,y,x+w,y,rad); ctx.closePath(); ctx.stroke(); };
+  rr(-110,-34,120,68,34); rr(-10,-34,120,68,34);
+  ctx.restore();
+  // the name, shrunk to fit the space beside the circle
+  const text = name.toUpperCase();
+  const fam = '"Montserrat","Helvetica Neue",Arial,sans-serif';
+  let size = 150;
+  ctx.fillStyle = color; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  const maxW = 750;
+  ctx.font = "400 " + size + "px " + fam;
+  while(ctx.measureText(text).width > maxW && size > 48){ size -= 4; ctx.font = "400 " + size + "px " + fam; }
+  let out = text;
+  while(ctx.measureText(out).width > maxW && out.length > 1){ out = out.slice(0,-1); }
+  if(out !== text) out = out.slice(0,-1) + "\u2026";
+  ctx.fillText(out, 400, 1217);
+  return c.toDataURL("image/png");
+}
+function qrTemplateFor(key, data){
+  if(key !== QR_OTHER_KEY) return QR_TEMPLATES[key];
+  const name = (((data || currentData).linkOtherName) || "").trim() || "Link";
+  const color = "#0C1E3D";
+  return { label:name, color, src:buildOtherQrTemplate(name, color) };
+}
 function loadImageEl(src){
   return new Promise((resolve, reject)=>{
     const img = new Image();
@@ -8542,14 +8585,14 @@ function imageToPdfBase64(pngDataUrl, widthPx, heightPx, dpi){
    saving the Links section — never blocks the save, and failures on one
    QR don't stop the others. */
 async function generateAndUploadQrCodes(authorName, data){
-  for(const key of Object.keys(QR_TEMPLATES)){
+  for(const key of qrKeysAll()){
     const url = data[key];
     if(!url || !url.trim()) continue;
-    const tpl = QR_TEMPLATES[key];
+    const tpl = qrTemplateFor(key, data);
     try{
       const compositePng = await buildQrComposite(tpl.src, url.trim(), tpl.color);
       const pdfBase64 = imageToPdfBase64(compositePng, 1200, 1500, 300);
-      const filename = `${authorName} ${tpl.label}.pdf`;
+      const filename = `${authorName} ${String(tpl.label).replace(/[\\/:*?"<>|]/g, "").trim() || "Link"}.pdf`;
       await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
@@ -8572,7 +8615,7 @@ function renderQrPreview(){
     <div class="section-sub">A preview of every QR code that will be generated from your saved links.</div>
   `;
 
-  const filled = Object.keys(QR_TEMPLATES).filter(k => currentData[k] && currentData[k].trim());
+  const filled = qrKeysAll().filter(k => currentData[k] && currentData[k].trim());
 
   if(filled.length === 0){
     const empty = document.createElement('div');
@@ -8727,7 +8770,7 @@ async function buildQrSheetCanvas(canvas, filledKeys){
     const rowW = rowItems.length*tileW + (rowItems.length-1)*GAP;
     let gx = MARGIN + (innerW - rowW)/2;
     for(const key of rowItems){
-      const tpl = QR_TEMPLATES[key];
+      const tpl = qrTemplateFor(key);
       try{
         const composite = await buildQrComposite(tpl.src, currentData[key].trim(), tpl.color);
         const img = await loadImageEl(composite);
