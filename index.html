@@ -1350,6 +1350,31 @@ function donatedValueFor_(line, data){
   return bk ? bookPrice(bk) : 0;
 }
 
+const DON_UNDECIDED_OPT = "I don't know what prizes I'll donate, but I know how many";
+/* Cover image from the presale screen (Google Drive link) -> small/large
+   thumbnail links the Prize Manager can show as a prize photo. */
+function _driveThumb(url, sz){
+  const u = String(url || "");
+  const m = u.match(/\/d\/([^/?#]+)/) || u.match(/[?&]id=([^&]+)/);
+  return m ? "https://drive.google.com/thumbnail?id=" + m[1] + "&sz=w" + sz : u;
+}
+function donatedCoverFor_(line, data){
+  const list = (data && data.preorderBooksList) || [];
+  const t = _donNorm(line.title);
+  if(!t) return "";
+  const cover = b => { try{ return primaryBookCoverUrl(b) || ""; }catch(e){ return b.coverUrl || ""; } };
+  const inSeries = list.filter(b => b && b.isSeries === "Yes" && _donNorm(b.seriesName) === t);
+  if(inSeries.length){
+    const withSeriesCover = inSeries.find(b => b.seriesHasCover === "Yes" && b.seriesCoverUrl);
+    if(withSeriesCover) return withSeriesCover.seriesCoverUrl;
+    const ordered = inSeries.slice().sort((a, b) => (parseFloat(a.seriesBookNumber) || 999) - (parseFloat(b.seriesBookNumber) || 999));
+    for(const b of ordered){ const c = cover(b); if(c) return c; }
+    return "";
+  }
+  const bk = list.find(b => b && _donNorm(b.title) === t);
+  return bk ? cover(bk) : "";
+}
+
 function desiredDonatedPrizes_(data){
   const lines = {};
   (data.donatedBooksList || []).forEach(e => {
@@ -1362,9 +1387,19 @@ function desiredDonatedPrizes_(data){
     else lines[base] = {base, kind, title, series:e.series || "", qty:q};
   });
   const out = [];
+  // "I don't know what prizes I'll donate, but I know how many": one
+  // "Undecided" prize per copy, to be replaced once they pick real titles.
+  if(!Object.keys(lines).length && data.donationKnowledge === DON_UNDECIDED_OPT){
+    const n = Math.min(parseInt(data.donatedCount, 10) || 0, 200);
+    for(let k = 1; k <= n; k++){
+      out.push({key:"undecided__" + k, title:"Undecided", kind:"undecided", isBook:true, value:0, copy:k, total:n, seriesBooks:0});
+    }
+    return out;
+  }
   Object.keys(lines).forEach(k => {
     const l = lines[k];
     const value = donatedValueFor_(l, data);
+    const cover = donatedCoverFor_(l, data);
     const list = data.preorderBooksList || [];
     let seriesBooks = 0;
     if(l.kind === "series"){
@@ -1373,7 +1408,7 @@ function desiredDonatedPrizes_(data){
     }
     for(let n = 1; n <= l.qty; n++){
       out.push({key:l.base + "__" + n, title:l.title, kind:l.kind, isBook:true,
-                value, copy:n, total:l.qty, seriesBooks});
+                value, cover, copy:n, total:l.qty, seriesBooks});
     }
   });
   return out;
@@ -1389,7 +1424,9 @@ async function _fbReq(path, method, body){
 
 function _prizeRecordFor(id, d, author, slug, data, now){
   const bookish = d.isBook;
-  const notes = "Auto-added from Author Info."
+  const notes = d.kind === "undecided"
+    ? "Auto-added from Author Info. The author hasn't decided which prize this will be yet (prize " + d.copy + " of " + d.total + ")."
+    : "Auto-added from Author Info."
     + (d.kind === "series" ? " Whole series" + (d.seriesBooks ? " (" + d.seriesBooks + " books)." : ".") : "")
     + (d.total > 1 ? " Copy " + d.copy + " of " + d.total + "." : "");
   const rec = {
@@ -1403,6 +1440,8 @@ function _prizeRecordFor(id, d, author, slug, data, now){
     _created:now, _mod:now
   };
   if(bookish){ rec.author = author; rec.bookTitle = d.title; }
+  rec.photos = [];
+  if(d.cover){ rec.photos = [{thumb:_driveThumb(d.cover, 300)}]; rec.coverAdded = true; }
   return rec;
 }
 
@@ -1411,13 +1450,13 @@ const _prizeSyncSig = {};
 async function syncDonatedPrizes(author, data){
   try{
     if(!author || author !== currentAuthor || data !== currentData || !currentData) return;
-    if(!Array.isArray(data.donatedBooksList)) return;
+    if(!Array.isArray(data.donatedBooksList) && data.donationKnowledge !== DON_UNDECIDED_OPT) return;
     const passed = data.prizesPlan === "I'll pass on donating prizes.";
     const desired = passed ? [] : desiredDonatedPrizes_(data);
     // Never wipe an author's prizes just because their list failed to load.
     if(!desired.length && !passed && !data.donationListStatus) return;
     const slug = String(author).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const sig = JSON.stringify([author, desired.map(d => [d.key, d.title, d.value, d.isBook, d.seriesBooks]), data.linkWebsite || "", data.logoUrl || ""]);
+    const sig = JSON.stringify([author, desired.map(d => [d.key, d.title, d.value, d.isBook, d.seriesBooks, d.cover || ""]), data.linkWebsite || "", data.logoUrl || ""]);
     if(_prizeSyncSig[slug] === sig) return;
     if(_prizeSyncRunning){ _prizeSyncAgain = [author, data]; return; }
     _prizeSyncRunning = true;
@@ -1436,6 +1475,23 @@ async function syncDonatedPrizes(author, data){
       const now = Date.now();
       const wanted = {}; desired.forEach(d => { wanted[d.key] = d; });
 
+      // Real prizes take over "Undecided" placeholders (keeping anything added
+      // to them in the Prize Manager) instead of leaving the placeholders behind.
+      const takenOver = {};
+      const spare = Object.keys(items).filter(k => k.indexOf("undecided__") === 0 && !wanted[k])
+        .sort((a, b) => parseInt(a.split("__")[1], 10) - parseInt(b.split("__")[1], 10));
+      for(const d of desired){
+        if(items[d.key] || !spare.length) continue;
+        while(spare.length){
+          const oldKey = spare.shift();
+          const rec = await _fbReq("prizes/p_" + items[oldKey], "GET");
+          if(!rec){ delete items[oldKey]; continue; }
+          items[d.key] = items[oldKey]; delete items[oldKey];
+          takenOver[d.key] = rec;
+          break;
+        }
+      }
+
       // Prizes no longer on the author's list
       for(const key of Object.keys(items)){
         if(wanted[key]) continue;
@@ -1445,7 +1501,7 @@ async function syncDonatedPrizes(author, data){
         if(rec._mod === rec._created && !rec.bundledInto && !rec.isBundle){
           await _fbReq("prizes/p_" + id, "DELETE");
         } else {
-          await _fbReq("prizes/p_" + id, "PATCH", {notes:(rec.notes ? rec.notes + " " : "") + "(The author took this off their list.)"});
+          await _fbReq("prizes/p_" + id, "PATCH", {notes:(rec.notes ? rec.notes + " " : "") + (key.indexOf("undecided__") === 0 ? "(The author has since chosen their real prizes, so this placeholder can be deleted.)" : "(The author took this off their list.)")});
         }
         delete items[key];
       }
@@ -1456,18 +1512,32 @@ async function syncDonatedPrizes(author, data){
           if(next >= 999) continue; // safety cap per author
           next++; id = base + next;
           await _fbReq("prizes/p_" + id, "PUT", _prizeRecordFor(id, d, author, slug, data, now));
+          if(d.cover) await _fbReq("photos/p_" + id, "PUT", [_driveThumb(d.cover, 1000)]);
           items[d.key] = id;
           continue;
         }
-        const rec = await _fbReq("prizes/p_" + id, "GET");
+        const rec = takenOver[d.key] || await _fbReq("prizes/p_" + id, "GET");
         if(!rec) continue; // deleted in the Prize Manager on purpose: leave it gone
         const rebuilt = _prizeRecordFor(id, d, author, slug, data, rec._created || now);
-        if(rec._mod === rec._created){
+        if(takenOver[d.key]){
+          const untouched = rec._mod === rec._created;
+          const cleanNotes = String(rec.notes || "").replace(/\s*The author hasn't decided which prize this will be yet \(prize \d+ of \d+\)\./, "").replace(/\s*\(The author has since chosen[^)]*\)/, "").trim();
+          await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, bookTitle:rebuilt.bookTitle || null, author:rebuilt.author || null,
+            donationKey:d.key, donationTagType:rebuilt.donationTagType, value:(+rec.value ? rec.value : rebuilt.value),
+            notes: untouched ? rebuilt.notes : (cleanNotes || rebuilt.notes),
+            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorLogo:rebuilt.donorLogo});
+        } else if(rec._mod === rec._created){
           await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, value:rebuilt.value, notes:rebuilt.notes,
             donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorLogo:rebuilt.donorLogo, donationTagType:rebuilt.donationTagType,
             author:rebuilt.author || null, bookTitle:rebuilt.bookTitle || null});
         } else if(!(+rec.value) && d.value){
           await _fbReq("prizes/p_" + id, "PATCH", {value:d.value});
+        }
+        // Presale cover as the prize photo, only when the prize has no photo yet
+        // and one was never added before (never replaces photos added by hand).
+        if(d.cover && !rec.coverAdded && !(rec.photos && rec.photos.length)){
+          await _fbReq("prizes/p_" + id, "PATCH", {photos:[{thumb:_driveThumb(d.cover, 300)}], coverAdded:true});
+          await _fbReq("photos/p_" + id, "PUT", [_driveThumb(d.cover, 1000)]);
         }
       }
       await _fbReq("authorPrizes/" + slug, "PUT", {slot, next, name:author, items, at:now});
@@ -2649,7 +2719,7 @@ function computeChecklist(){
       } else if(hasTitles){
         row = {label:"Donated books", preview: truncatePreview(donatedTitlesText().replace(/\n/g," / "), 60), done:true, required:true, target:"donation-titles"};
       } else if(hasCount){
-        row = {label:"Donated books", preview: truncatePreview(d.donatedCount, 60), done:true, required:true, target:"donation-knowledge"};
+        row = {label:"Prizes you are donating", done:false, tentative:true, required:true, target:"donation-titles", preview: "You're donating " + truncatePreview(d.donatedCount, 20) + " \u2014 please choose which by Mar 1."};
       } else {
         row = {label:"Donated books", done:false, required:true, target:"donation-knowledge", addLabel:"Have not added"};
       }
