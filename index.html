@@ -721,8 +721,8 @@ const STEPS = {
       {key:"linkYoutube", label:"YouTube", type:"url", linkStatus:true},
       {key:"linkBookbub", label:"BookBub", type:"url", linkStatus:true},
       {key:"linkSpotify", label:"Spotify", type:"url", linkStatus:true},
-      {key:"linkOtherName", label:"Anywhere else readers can find you? What's it called?", type:"text", autoCapitalize:true, placeholder:"Example: Goodreads, Patreon, Ko-fi", help:"Only if there's a place that isn't listed above. This name goes on its QR code."},
-      {key:"linkOtherUrl", label:"Link for that place", type:"url", linkStatus:true, laterLabel:"I have something else, but I'll come back to add it later", noneLabel:"I don't have anything else", help:"Paste the full web address, starting with https://"},
+      {key:"linkOtherName", label:"Anywhere else readers can find you? What's it called?", type:"text", autoCapitalize:true, linkStatus:true, laterLabel:"I have something else, but I'll come back to add it later", noneLabel:"I don't have anything else", placeholder:"Example: Goodreads, Patreon, Ko-fi"},
+      {key:"linkOtherUrl", label:"", type:"url"},
       {key:"linksListStatus", label:"", type:"radio", statusToggle:true, options:[
         "That is all the links I will be adding (will mark this completed on your To-Do list)",
         "I will be coming back and adding more links (will keep this active on your To-Do list)"
@@ -1145,6 +1145,7 @@ async function loadAuthorData(author){
       const data = { meta: { welcomeSeen: !!json.meta.welcomeSeen, currentStep: json.meta.currentStep || "general-info", generalInfoUpdatedAt:null, linkVerification: json.meta.linkVerification || {} }, ...json.data };
       if(json.headshotUrl) data.headshotUrl = json.headshotUrl;
       if(json.logoUrl) data.logoUrl = json.logoUrl;
+      unpackLinkOther(data);
       migrateBooksSellingField(data);
       localCache.set(storageKey(author), JSON.stringify(data), true);
       return data;
@@ -1168,6 +1169,16 @@ async function loadAuthorData(author){
    into two separate questions (sellingPlan + presalePlan), and the free
    text "books you're selling" field became a one-per-line list — this
    migrates any already-saved answers into the new shape. */
+function unpackLinkOther(data){
+  if(!data || data.linkOtherName !== undefined || data.linkOtherUrl !== undefined) return;
+  const raw = String(data.linkOther || "").trim();
+  data.linkOtherName = ""; data.linkOtherUrl = "";
+  if(!raw) return;
+  if(raw.charAt(0) === "{"){
+    try{ const o = JSON.parse(raw); data.linkOtherName = o.n || ""; data.linkOtherUrl = o.u || ""; return; }catch(e){}
+  }
+  data.linkOtherName = raw; // older plain-text answer
+}
 function migrateBooksSellingField(data){
   if(!data) return;
   if(!data.titlesBringingA && data.titlesBringingB){
@@ -1262,6 +1273,11 @@ async function saveAuthorData(author, data){
   try{ if(data === currentData) recomputeSeriesPrices(); }catch(e){}
   localCache.set(storageKey(author), JSON.stringify(data), true);
   const { meta, headshotUrl, logoUrl, ...fieldData } = data;
+  // The sheet has one existing column for "anywhere else" (linkOther). Keep the
+  // name and the link together in it, so no new sheet columns are needed.
+  const _on = String(fieldData.linkOtherName || "").trim(), _ou = String(fieldData.linkOtherUrl || "").trim();
+  fieldData.linkOther = (_on || _ou) ? JSON.stringify({n:_on, u:_ou}) : "";
+  delete fieldData.linkOtherName; delete fieldData.linkOtherUrl;
   showSaveOverlayIfSlow();
   try{
     await pushToSheet("saveData", { authorName: author, data: fieldData, meta: meta || {} });
@@ -8172,7 +8188,13 @@ function renderDonationKnowledge(step){
   app.appendChild(card);
 }
 
-function linkStatusOf(key){ return (currentData.linkStatuses && currentData.linkStatuses[key]) || ""; }
+// The "anywhere else" place is two fields (name + link) but one choice, so its
+// "I don't have anything else" / "come back later" status is stored once,
+// under the name field.
+function linkStatusOf(key){
+  if(key === "linkOtherUrl") key = "linkOtherName";
+  return (currentData.linkStatuses && currentData.linkStatuses[key]) || "";
+}
 function setLinkStatus(key, val){
   if(!currentData.linkStatuses) currentData.linkStatuses = {};
   if(val) currentData.linkStatuses[key] = val; else delete currentData.linkStatuses[key];
