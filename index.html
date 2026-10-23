@@ -6587,7 +6587,7 @@ function buildBookCoverUpload(book){
       const res = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, base64: dataUrl, mimeType:"image/jpeg" })
+        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, bookTitle: (book.title||""), base64: dataUrl, mimeType:"image/jpeg" })
       });
       const json = await res.json();
       if(!json || !json.success) throw new Error((json && json.error) || "Upload didn't complete.");
@@ -6658,7 +6658,7 @@ function buildFormatCoverUpload(book, format, formatLabel){
       const res = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, base64: dataUrl, mimeType:"image/jpeg" })
+        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, bookTitle: (book.title||""), base64: dataUrl, mimeType:"image/jpeg" })
       });
       const json = await res.json();
       if(!json || !json.success) throw new Error((json && json.error) || "Upload didn't complete.");
@@ -6726,7 +6726,7 @@ function buildSeriesCoverUpload(book){
       const res = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, base64: dataUrl, mimeType:"image/jpeg" })
+        body: JSON.stringify({ action:"uploadFile", authorName: currentAuthor, fileType: fileKey, bookTitle: (book.title||""), base64: dataUrl, mimeType:"image/jpeg" })
       });
       const json = await res.json();
       if(!json || !json.success) throw new Error((json && json.error) || "Upload didn't complete.");
