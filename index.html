@@ -1452,7 +1452,7 @@ function _prizeRecordFor(id, d, author, slug, data, now){
     source:"author-info", authorSlug:slug, donationKey:d.key,
     _created:now, _mod:now
   };
-  if(bookish){ rec.author = author; rec.bookTitle = d.title; }
+  if(bookish){ rec.author = author; rec.bookTitle = d.title; rec.isSeries = d.kind === "series"; }
   rec.photos = [];
   if(d.cover){ rec.photos = [{thumb:_driveThumb(d.cover, 300)}]; rec.coverAdded = true; }
   return rec;
@@ -1535,20 +1535,21 @@ async function syncDonatedPrizes(author, data){
         if(takenOver[d.key]){
           const untouched = rec._mod === rec._created;
           const cleanNotes = String(rec.notes || "").replace(/\s*The author hasn't decided which prize this will be yet \(prize \d+ of \d+\)\./, "").replace(/\s*\(The author has since chosen[^)]*\)/, "").trim();
-          await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, bookTitle:rebuilt.bookTitle || null, author:rebuilt.author || null,
+          await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, bookTitle:rebuilt.bookTitle || null, isSeries:!!rebuilt.isSeries, author:rebuilt.author || null,
             donationKey:d.key, donationTagType:rebuilt.donationTagType, value:(+rec.value ? rec.value : rebuilt.value),
             notes: untouched ? rebuilt.notes : (cleanNotes || rebuilt.notes),
             donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorQRType:rebuilt.donorQRType, donorPronoun:"her", donorLogo:rebuilt.donorLogo});
         } else if(rec._mod === rec._created){
           await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, value:rebuilt.value, notes:rebuilt.notes,
             donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorQRType:rebuilt.donorQRType, donorPronoun:"her", donorLogo:rebuilt.donorLogo, donationTagType:rebuilt.donationTagType,
-            author:rebuilt.author || null, bookTitle:rebuilt.bookTitle || null});
+            author:rebuilt.author || null, bookTitle:rebuilt.bookTitle || null, isSeries:!!rebuilt.isSeries});
         } else if(!(+rec.value) && d.value){
           await _fbReq("prizes/p_" + id, "PATCH", {value:d.value});
         }
         // A prize edited by hand keeps its edits, but a missing QR link or logo is filled in.
         if(rec._mod !== rec._created && !takenOver[d.key]){
           const gap = {};
+          if(rebuilt.itemType === "Book" && rec.isSeries === undefined){ gap.isSeries = !!rebuilt.isSeries; }
           if(!String(rec.donorWebsite || "").trim() && rebuilt.donorWebsite){ gap.donorWebsite = rebuilt.donorWebsite; gap.donorQRType = rebuilt.donorQRType; }
           if(!String(rec.donorLogo || "").trim() && rebuilt.donorLogo){ gap.donorLogo = rebuilt.donorLogo; }
           if(!rec.donorPronoun || rec.donorPronoun === "their"){ gap.donorPronoun = "her"; }
