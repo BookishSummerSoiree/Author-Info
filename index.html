@@ -692,13 +692,13 @@ const STEPS = {
     title: "Misc Fun Stuff!", icon: FLOURISH.heart,
     sub: "Don't stress over these. They're just for fun — skip anything you can't think of an answer for.",
     fields: [
-      {key:"drink", label:"What's your favorite thing to drink while writing?", type:"text", autoCapitalize:true},
+      {key:"drink", label:"Where do you usually write?", type:"radio", options:["Cafe","Couch","Desk"]},
       {key:"booksWritten", label:"How many books have you written?", type:"number", help:"This doesn't mean formally published! It could be 5. It could be 65. No need to overthink it."},
       {key:"rentFreeBook", label:"Is there a book that lives rent free in your head more than most other books?", type:"text", autoCapitalize:true},
       {key:"musicalTitle", label:"If you were to write a cheesy musical about your life, what would it be called?", type:"text", autoCapitalize:true, help:"This has nothing to do with whether you think you will. It's all for kicks and giggles."},
-      {key:"numberGuess", label:"Think of a number between 1–100 and put it below.", type:"number"},
-      {key:"heroineBook", label:"If you could be the heroine of any book (other than one of yours), which book would it be?", type:"text", autoCapitalize:true, help:"Feel free to elaborate on your choice, or just give the title."},
-      {key:"readingFormat", label:"When you read for pleasure, you usually grab...", type:"radio", options:["A physical book","Kindle","Headphones for an audiobook","A solid mix of all that"]},
+      {key:"numberGuess", label:"What's your writing-cave look?", type:"radio", options:["Pajamas","Power outfit","Something in between"]},
+      {key:"heroineBook", label:"What's the weirdest thing you've ever Googled for research?", type:"text", autoCapitalize:true, help:"Feel free to elaborate, or just give the search."},
+      {key:"readingFormat", label:"Are you a plotter or a pantser?", type:"radio", options:["Plotter","Pantser","A bit of both"]},
       {key:"sportsSong", label:"If you were a sports superstar, what song would you want played when you ran out onto the field?", type:"text", autoCapitalize:true},
     ],
     next: () => "links"
@@ -2571,13 +2571,13 @@ function computeChecklist(){
     title: "Misc Fun Stuff!",
     note: "(all optional)",
     rows: [
-      {label:"Fav drink", preview: isFieldFilled("drink") ? truncatePreview(d.drink, 40) : null, done:isFieldFilled("drink"), required:false, target:"misc-fun"},
+      {label:"Where you write", preview: isFieldFilled("drink") ? truncatePreview(d.drink, 40) : null, done:isFieldFilled("drink"), required:false, target:"misc-fun"},
       {label:"Number of books written", preview: isFieldFilled("booksWritten") ? truncatePreview(d.booksWritten, 40) : null, done:isFieldFilled("booksWritten"), required:false, target:"misc-fun"},
       {label:"Book that lives rent free in your head", preview: isFieldFilled("rentFreeBook") ? truncatePreview(d.rentFreeBook, 40) : null, done:isFieldFilled("rentFreeBook"), required:false, target:"misc-fun"},
       {label:"Cheesy musical about your life", preview: isFieldFilled("musicalTitle") ? truncatePreview(d.musicalTitle, 40) : null, done:isFieldFilled("musicalTitle"), required:false, target:"misc-fun"},
-      {label:"Number between 1\u2013100", preview: isFieldFilled("numberGuess") ? truncatePreview(d.numberGuess, 40) : null, done:isFieldFilled("numberGuess"), required:false, target:"misc-fun"},
-      {label:"Heroine in any book", preview: isFieldFilled("heroineBook") ? truncatePreview(d.heroineBook, 40) : null, done:isFieldFilled("heroineBook"), required:false, target:"misc-fun"},
-      {label:"Reading for pleasure", preview: isFieldFilled("readingFormat") ? truncatePreview(d.readingFormat, 40) : null, done:isFieldFilled("readingFormat"), required:false, target:"misc-fun"},
+      {label:"Writing-cave look", preview: isFieldFilled("numberGuess") ? truncatePreview(d.numberGuess, 40) : null, done:isFieldFilled("numberGuess"), required:false, target:"misc-fun"},
+      {label:"Weirdest research Google", preview: isFieldFilled("heroineBook") ? truncatePreview(d.heroineBook, 40) : null, done:isFieldFilled("heroineBook"), required:false, target:"misc-fun"},
+      {label:"Plotter or pantser", preview: isFieldFilled("readingFormat") ? truncatePreview(d.readingFormat, 40) : null, done:isFieldFilled("readingFormat"), required:false, target:"misc-fun"},
       {label:"Entry song", preview: isFieldFilled("sportsSong") ? truncatePreview(d.sportsSong, 40) : null, done:isFieldFilled("sportsSong"), required:false, target:"misc-fun"},
     ]
   });
