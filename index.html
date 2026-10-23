@@ -1376,6 +1376,18 @@ function donatedCoverFor_(line, data){
   return bk ? cover(bk) : "";
 }
 
+/* What the donation tag's QR code points to: their website; if none, Instagram;
+   if none, Facebook. Instagram/Facebook say "profile" on the tag instead of "website". */
+function donorQr_(data){
+  const w = String(data.linkWebsite || "").trim();
+  const i = String(data.linkInstagram || "").trim();
+  const f = String(data.linkFacebook || "").trim();
+  if(w) return {url:w, type:"website"};
+  if(i) return {url:i, type:"instagram"};
+  if(f) return {url:f, type:"facebook"};
+  return {url:"", type:"website"};
+}
+
 function desiredDonatedPrizes_(data){
   const lines = {};
   (data.donatedBooksList || []).forEach(e => {
@@ -1433,8 +1445,8 @@ function _prizeRecordFor(id, d, author, slug, data, now){
   const rec = {
     id, name: bookish ? (author + ": " + d.title) : d.title, cat:"BINGO", itemType: bookish ? "Book" : "Misc",
     value: d.value || 0, paid: 0, qty: 1, loc:"", notes,
-    donorType:"author", donor:author, donorWebsite:String(data.linkWebsite || "").trim(), donorQRType:"website",
-    donorPronoun:"their", donorLogo:String(data.logoUrl || ""),
+    donorType:"author", donor:author, donorWebsite:donorQr_(data).url, donorQRType:donorQr_(data).type,
+    donorPronoun:"her", donorLogo:String(data.logoUrl || ""),
     needTag:true, tagMade:false, tagPrinted:false, tagAttached:false, onTote:false, tagGenerated:false,
     donationTagType: bookish ? "book" : "other",
     source:"author-info", authorSlug:slug, donationKey:d.key,
@@ -1457,7 +1469,7 @@ async function syncDonatedPrizes(author, data){
     // Never wipe an author's prizes just because their list failed to load.
     if(!desired.length && !passed && !data.donationListStatus) return;
     const slug = String(author).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const sig = JSON.stringify([author, desired.map(d => [d.key, d.title, d.value, d.isBook, d.seriesBooks, d.cover || ""]), data.linkWebsite || "", data.logoUrl || ""]);
+    const sig = JSON.stringify([author, desired.map(d => [d.key, d.title, d.value, d.isBook, d.seriesBooks, d.cover || ""]), data.linkWebsite || "", data.linkInstagram || "", data.linkFacebook || "", data.logoUrl || ""]);
     if(_prizeSyncSig[slug] === sig) return;
     if(_prizeSyncRunning){ _prizeSyncAgain = [author, data]; return; }
     _prizeSyncRunning = true;
@@ -1526,13 +1538,21 @@ async function syncDonatedPrizes(author, data){
           await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, bookTitle:rebuilt.bookTitle || null, author:rebuilt.author || null,
             donationKey:d.key, donationTagType:rebuilt.donationTagType, value:(+rec.value ? rec.value : rebuilt.value),
             notes: untouched ? rebuilt.notes : (cleanNotes || rebuilt.notes),
-            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorLogo:rebuilt.donorLogo});
+            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorQRType:rebuilt.donorQRType, donorPronoun:"her", donorLogo:rebuilt.donorLogo});
         } else if(rec._mod === rec._created){
           await _fbReq("prizes/p_" + id, "PATCH", {name:rebuilt.name, itemType:rebuilt.itemType, value:rebuilt.value, notes:rebuilt.notes,
-            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorLogo:rebuilt.donorLogo, donationTagType:rebuilt.donationTagType,
+            donor:rebuilt.donor, donorWebsite:rebuilt.donorWebsite, donorQRType:rebuilt.donorQRType, donorPronoun:"her", donorLogo:rebuilt.donorLogo, donationTagType:rebuilt.donationTagType,
             author:rebuilt.author || null, bookTitle:rebuilt.bookTitle || null});
         } else if(!(+rec.value) && d.value){
           await _fbReq("prizes/p_" + id, "PATCH", {value:d.value});
+        }
+        // A prize edited by hand keeps its edits, but a missing QR link or logo is filled in.
+        if(rec._mod !== rec._created && !takenOver[d.key]){
+          const gap = {};
+          if(!String(rec.donorWebsite || "").trim() && rebuilt.donorWebsite){ gap.donorWebsite = rebuilt.donorWebsite; gap.donorQRType = rebuilt.donorQRType; }
+          if(!String(rec.donorLogo || "").trim() && rebuilt.donorLogo){ gap.donorLogo = rebuilt.donorLogo; }
+          if(!rec.donorPronoun || rec.donorPronoun === "their"){ gap.donorPronoun = "her"; }
+          if(Object.keys(gap).length) await _fbReq("prizes/p_" + id, "PATCH", gap);
         }
         // Presale cover as the prize photo, only when the prize has no photo yet
         // and one was never added before (never replaces photos added by hand).
