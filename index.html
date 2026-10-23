@@ -1393,7 +1393,7 @@ function desiredDonatedPrizes_(data){
   (data.donatedBooksList || []).forEach(e => {
     if(!e || !e.title || !String(e.title).trim()) return;
     const title = String(e.title).trim();
-    const kind = e.kind === "series" ? "series" : (e.kind === "book" ? "book" : "manual");
+    const kind = (e.kind === "series" || (e.kind === "manual" && e.isSeries)) ? "series" : (e.kind === "book" ? "book" : "manual");
     const base = (kind + "_" + _donNorm(title)).replace(/[^a-z0-9]+/g, "_");
     let q = parseInt(e.qty, 10); if(!(q >= 1)) q = 1;
     if(lines[base]) lines[base].qty += q;
@@ -4222,23 +4222,52 @@ function renderDonationTitles(step){
     const rows = donList().filter(e => e.kind === "manual");
     const head = document.createElement('div');
     head.style.cssText = "font-family:'Lora',serif;font-size:15px;font-weight:700;margin:6px 0 8px;";
-    head.textContent = "Enter each prize and how many you plan to donate.";
+    head.textContent = "Enter each book or series you plan to donate.";
     manualPanel.appendChild(head);
     rows.forEach((entry, i)=>{
       const row = document.createElement('div');
-      row.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:8px;";
+      row.style.cssText = "padding:8px 2px 12px;border-bottom:1px solid rgba(12,30,61,0.08);margin-bottom:6px;";
       const inp = document.createElement('input');
       inp.type = "text";
-      inp.placeholder = "Enter a prize";
+      inp.placeholder = "Book or series title";
       inp.value = entry.title || "";
-      inp.style.cssText = "flex:1;min-width:0;";
+      inp.style.cssText = "width:100%;box-sizing:border-box;font-family:'Lora',serif;font-size:15px;padding:11px 13px;";
       inp.addEventListener('input', ()=>{ entry.title = inp.value; });
+      // Book or series? (a series counts as ONE prize per copy and its bookmark says "the ___ series")
+      const kindRow = document.createElement('div');
+      kindRow.style.cssText = "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;";
+      const kindLbl = document.createElement('span');
+      kindLbl.style.cssText = "font-family:'Lora',serif;font-size:14px;margin-right:2px;";
+      kindLbl.textContent = "This is a:";
+      kindRow.appendChild(kindLbl);
+      const pills = [];
+      function paintPills(){
+        pills.forEach(p => {
+          const on = (p.val === "series") === !!entry.isSeries;
+          p.el.style.cssText = "font-family:'Lora',serif;font-size:14px;padding:7px 16px;border-radius:999px;cursor:pointer;border:1.5px solid var(--terracotta);" +
+            (on ? "background:var(--terracotta);color:#fff;font-weight:700;" : "background:transparent;color:inherit;");
+        });
+      }
+      [["book","Book"],["series","Whole series"]].forEach(([val,txt])=>{
+        const pb = document.createElement('button');
+        pb.type = "button"; pb.textContent = txt;
+        pb.addEventListener('click', ()=>{ entry.isSeries = (val === "series"); paintPills(); });
+        pills.push({val, el:pb});
+        kindRow.appendChild(pb);
+      });
+      paintPills();
+      const qtyRow = document.createElement('div');
+      qtyRow.style.cssText = "display:flex;gap:10px;align-items:center;margin-top:10px;";
+      const qLbl = document.createElement('span');
+      qLbl.style.cssText = "font-family:'Lora',serif;font-size:14px;";
+      qLbl.textContent = "How many are you planning on donating?";
       const qi = document.createElement('input');
       qi.type = "number"; qi.min = "1"; qi.step = "1"; qi.inputMode = "numeric";
-      qi.placeholder = "How many?";
+      qi.placeholder = "1";
       qi.value = entry.qty === "" || entry.qty === undefined ? "" : entry.qty;
-      qi.style.cssText = "width:96px;flex-shrink:0;";
+      qi.style.cssText = "width:80px;flex-shrink:0;font-size:15px;padding:9px 10px;";
       qi.addEventListener('input', ()=>{ entry.qty = qi.value === "" ? "" : parseInt(qi.value,10); });
+      qtyRow.appendChild(qLbl); qtyRow.appendChild(qi);
       inp.addEventListener('keydown', (e)=>{
         if(e.key === "Enter"){
           e.preventDefault();
@@ -4247,14 +4276,14 @@ function renderDonationTitles(step){
           renderManualPanel(i + 1);
         }
       });
-      row.appendChild(inp); row.appendChild(qi);
+      row.appendChild(inp); row.appendChild(kindRow); row.appendChild(qtyRow);
       manualPanel.appendChild(row);
     });
     const addBtn = document.createElement('button');
     addBtn.type = "button";
     addBtn.className = "btn btn-secondary btn-tiny";
     addBtn.style.cssText = "margin-top:2px;margin-bottom:14px;";
-    addBtn.textContent = "+ Add another prize";
+    addBtn.textContent = "+ Add another title";
     addBtn.onclick = () => {
       donList().push({kind:"manual", title:"", series:"", qty:""});
       renderManualPanel(rows.length);
@@ -4277,7 +4306,7 @@ function renderDonationTitles(step){
       if(!e || !e.title || !String(e.title).trim()) return;
       let q = parseInt(e.qty, 10);
       if(!(q >= 1)) q = 1;
-      out.push({kind:e.kind, key:e.key, title:String(e.title).trim(), series:e.series || "", qty:q});
+      out.push({kind:e.kind, key:e.key, title:String(e.title).trim(), series:e.series || "", qty:q, isSeries:!!e.isSeries});
     });
     currentData.donatedBooksList = out;
     const total = out.reduce((s,e)=> s + e.qty, 0);
