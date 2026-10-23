@@ -1295,10 +1295,11 @@ function reportProgressToHQ(author, data){
   try{
     if(!author || author !== currentAuthor || data !== currentData || !currentData) return;
     let total = 0, done = 0;
-    computeChecklist().forEach(s => s.rows.forEach(r => { if(r.required){ total++; if(r.done) done++; } }));
+    const todo = [];
+    computeChecklist().forEach(s => s.rows.forEach(r => { if(r.required){ total++; if(r.done) done++; todo.push({l: String(r.label||"").slice(0,90), d: r.done ? 1 : 0}); } }));
     const slug = String(author).toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const body = {
-      done, total,
+      done, total, todo,
       prizes: currentData.prizesPlan === "I'll pass on donating prizes." ? "no" : "yes",
       swag:   currentData.swagPlan   === "I'll pass on adding swag to the totes." ? "no" : "yes",
       at: Date.now()
