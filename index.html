@@ -4268,6 +4268,21 @@ function renderDonationTitles(step){
       qi.style.cssText = "width:80px;flex-shrink:0;font-size:15px;padding:9px 10px;";
       qi.addEventListener('input', ()=>{ entry.qty = qi.value === "" ? "" : parseInt(qi.value,10); });
       qtyRow.appendChild(qLbl); qtyRow.appendChild(qi);
+      // Remove this title (entered by hand, so there is no checkbox to untick)
+      const delBtn = document.createElement('button');
+      delBtn.type = "button";
+      delBtn.textContent = "Delete this title";
+      delBtn.style.cssText = "margin-left:auto;font-family:'Lora',serif;font-size:13px;padding:6px 12px;border-radius:999px;cursor:pointer;border:1.5px solid #b42318;color:#b42318;background:transparent;";
+      delBtn.addEventListener('click', ()=>{
+        const idx = donList().indexOf(entry);
+        if(idx !== -1) donList().splice(idx, 1);
+        if(!donList().some(e => e.kind === "manual")){
+          // nothing typed by hand any more: close the section (or leave one blank row if it is open)
+          if(typeof pillManual !== "undefined") { showManual = false; restylePills(); }
+        }
+        renderManualPanel();
+      });
+      qtyRow.appendChild(delBtn);
       inp.addEventListener('keydown', (e)=>{
         if(e.key === "Enter"){
           e.preventDefault();
