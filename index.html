@@ -2689,9 +2689,10 @@ function computeChecklist(){
       const missing = [];
       if(!bookHasCover(b)) missing.push("cover");
       if(!bookHasAllPrices(b)) missing.push("price");
+      if(b.swagPack === "Yes" && !(parseFloat(b.swagPrice) > 0)) missing.push("swag pack price");
       if(missing.length){
         rows.push({
-          label: `"${truncatePreview(b.title, 30)}" is missing a ${missing.join(" and ")}`,
+          label: `"${truncatePreview(b.title, 30)}" is missing ${missing.length>1 ? "a " : "a "}${missing.join(" and ")}`,
           done:false, required:true, target:"preorder-books"
         });
       }
@@ -5634,6 +5635,39 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
   wrap.appendChild(pricesWrap);
   const soireeWrap = document.createElement('div');
   wrap.appendChild(soireeWrap);
+
+  // ---- Swag pack add-on (one flat price; no Soirée pricing) ----
+  const swagField = document.createElement('div');
+  swagField.className = "field";
+  swagField.innerHTML = `<label>Would you like to add a <em>Swag pack</em> for this book?</label>
+    <div class="help" style="margin-top:2px;font-size:12px;">Some stickers, magnet, bookmark, whatever you want</div>`;
+  const swagRow = document.createElement('div');
+  swagRow.style.cssText = "display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;";
+  const swagYes = document.createElement('button'); swagYes.type = "button"; swagYes.textContent = "Yes";
+  const swagNo = document.createElement('button'); swagNo.type = "button"; swagNo.textContent = "No";
+  [swagYes, swagNo].forEach(b => swagRow.appendChild(b));
+  swagField.appendChild(swagRow);
+  const swagPriceWrap = document.createElement('div');
+  swagPriceWrap.style.cssText = "margin-top:10px;";
+  swagPriceWrap.innerHTML = `<label style="display:block;margin-bottom:4px;">Swag pack price <span class="req">*</span></label>`;
+  const swagPriceInp = document.createElement('input');
+  swagPriceInp.type = "number"; swagPriceInp.inputMode = "decimal"; swagPriceInp.step = "0.01"; swagPriceInp.min = "0";
+  swagPriceInp.placeholder = "e.g. 5.00";
+  swagPriceInp.style.maxWidth = "160px";
+  swagPriceInp.value = book.swagPrice || "";
+  swagPriceInp.addEventListener('input', ()=>{ book.swagPrice = swagPriceInp.value; });
+  swagPriceWrap.appendChild(swagPriceInp);
+  swagField.appendChild(swagPriceWrap);
+  function paintSwag(){
+    const on = book.swagPack === "Yes";
+    swagYes.className = "btn btn-compact " + (on ? "btn-primary" : "btn-secondary");
+    swagNo.className = "btn btn-compact " + (!on ? "btn-primary" : "btn-secondary");
+    swagPriceWrap.style.display = on ? "block" : "none";
+  }
+  swagYes.onclick = () => { book.swagPack = "Yes"; paintSwag(); swagPriceInp.focus(); };
+  swagNo.onclick = () => { book.swagPack = "No"; paintSwag(); };
+  paintSwag();
+  wrap.appendChild(swagField);
 
   const sameCoverField = document.createElement('div');
   sameCoverField.className = "field";
