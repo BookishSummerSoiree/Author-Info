@@ -693,7 +693,7 @@ const STEPS = {
     sub: "Don\u2019t stress over these. They\u2019re just for fun\u2014and you don\u2019t need to answer all of them, so skip anything you want to.<br><br>Some answers might be used in the Instagram post announcing you\u2019re one of the Soir\u00e9e authors, and some used at the Soir\u00e9e. But all are for smiles and fun.",
     fields: [
       {key:"whatYouWrite", label:"What do you write?", helpHtml:"<em>(Please answer this one. It\u2019s the only question that will <u>for sure</u> be used. It will be part of the post when we announce you are one of the Soir\u00e9e authors. Feel free to use five words, or several sentences\u2014whatever you would want readers to know.)</em>", type:"textarea", autoCapitalize:true},
-      {key:"funTalent", label:"Do you have a fun/random/silly/cool talent you want people to know about?", type:"text", autoCapitalize:true},
+      {key:"funTalent", label:"Do you have a fun/random/silly/cool talent or fact you want people to know about?", type:"text", autoCapitalize:true},
       {key:"drink", label:"Where do you usually write?", type:"radio", options:["Cafe","Couch","Desk"]},
       {key:"booksWritten", label:"How many books have you written?", type:"number", help:"This doesn't mean formally published! It could be 5. It could be 65. No need to overthink it."},
       {key:"rentFreeBook", label:"Is there a book that lives rent free in your head more than most other books?", type:"text", autoCapitalize:true},
@@ -794,16 +794,16 @@ const STEPS = {
       {key:"preorderPlan", label:"", type:"radio", required:true, options:[
         "Yes",
         "No",
-        "I'm not sure. Give me more information."
-      ]}
+        "I'm on the fence, and I'm going to think about it"
+      ], optionNotes:{"I'm on the fence, and I'm going to think about it":"(this decision will be on your To-Do list)"}}
     ],
     next: (d) => {
-      if(d.preorderPlan === "No") return "swag";
+      if(d.preorderPlan === "No" || d.preorderPlan === "I'm on the fence, and I'm going to think about it" || d.preorderPlan === "I'm not sure. Give me more information.") return "swag";
       return "preorder-payouts";
     },
     shortcutDynamicButton: {
       watchField: "preorderPlan",
-      showWhen: ["Yes", "I'm not sure. Give me more information."],
+      showWhen: ["Yes"],
       label: "Let's make sure your Stripe account is ready to go",
       target: "preorder-payouts"
     }
@@ -2668,8 +2668,10 @@ function computeChecklist(){
   sections.push({
     title: "Presale Books for the Soirée",
     rows: [
-      {label:"Your plan", preview: d.preorderPlan ? preorderLabels[d.preorderPlan] : null,
-       done:isFieldFilled("preorderPlan"), required:false, target:"preorder-plan"}
+      (d.preorderPlan === "I'm on the fence, and I'm going to think about it" || d.preorderPlan === "I'm not sure. Give me more information.")
+        ? {label:"Decide about presale books", preview:"still thinking about it", done:false, required:true, target:"preorder-plan", addLabel:"Need to decide"}
+        : {label:"Your plan", preview: d.preorderPlan ? preorderLabels[d.preorderPlan] : null,
+           done:isFieldFilled("preorderPlan"), required:false, target:"preorder-plan"}
     ]
   });
 
@@ -4927,9 +4929,6 @@ function renderPreorderBooks(step){
     <div class="eyebrow">Bookish Summer Soirée</div>
     <h1 class="section-title">${titleImg}${step.title}</h1>
     <div class="help" style="margin-top:10px;line-height:1.5;">
-      It's going to be easier than ever for attendees to preorder your books!<br><br>
-      <strong>What it will look like for attendees:</strong> All books available for preorder will be in one place. No more needing to go in and out of each preorder form. They can look at all available books, or search by author or book title. It will be like a mini-amazon shopping experience: One cart. One transaction. All the authors.<br><br>
-      <strong>What it will look like for you:</strong> You will upload your title, cover, blurb, and price. You'll get an email for every order, and you can check your sales anytime from your personalized Home Screen right here in this app. You choose how you're paid:<ul style="margin:6px 0 6px 22px;padding:0;"><li style="margin-bottom:4px;"><strong>Stripe</strong> (paid straight into your own Stripe account, and you decide whether payouts happen daily, weekly, or monthly).</li><li><strong>Venmo</strong> (the money goes into the Soirée Stripe account, and Nicole sends you a Venmo within about two weeks).</li></ul>Either way, you don't have to keep track of who has paid, or worry about collecting money.<br><br>
       <strong>Swag Packs:</strong> You have the option to sell a little Swag pack with each book. <em>You set the price. You set what is in the pack. Readers get the goodies.</em><span style="display:block;height:.6em;"></span>
       Customers will see: "Swag pack is available for this book <em style="font-size:.9em;">(stickers/bookmark for this book. Each book will have different swag, and no specific swag is guaranteed\u2014but it's guaranteed to be awesome!)</em>" Then you include the swag you want for that book.<br><br>
       If you have an unpublished book that will be available by the Soirée, be sure to include it, and mark it <em>new</em>.
@@ -4937,7 +4936,7 @@ function renderPreorderBooks(step){
     <div class="section-sub" style="margin-top:14px;">${step.sub || ""}</div>
   `;
 
-  if(currentData.preorderPlan === "I'm not sure. Give me more information."){
+  if(currentData.preorderPlan === "I'm on the fence, and I'm going to think about it" || currentData.preorderPlan === "I'm not sure. Give me more information."){
     const optOutBtn = document.createElement('button');
     optOutBtn.type = "button";
     optOutBtn.className = "btn btn-secondary btn-tiny";
@@ -8595,7 +8594,7 @@ function renderField(f){
     f.options.forEach(opt=>{
       const optWrap = document.createElement('label');
       optWrap.className = "radio-option" + (currentData[f.key]===opt ? " selected":"");
-      optWrap.innerHTML = `<input type="radio" name="${f.key}" value="${escapeAttr(opt)}" ${currentData[f.key]===opt?'checked':''}><span>${statusOptionHtml(opt)}</span>`;
+      optWrap.innerHTML = `<input type="radio" name="${f.key}" value="${escapeAttr(opt)}" ${currentData[f.key]===opt?'checked':''}><span>${statusOptionHtml(opt)}${(f.optionNotes && f.optionNotes[opt]) ? `<span style="display:block;font-weight:400;font-size:.8em;opacity:.8;margin-top:2px;">${escapeHtmlFull(f.optionNotes[opt])}</span>` : ""}</span>`;
       optWrap.querySelector('input').addEventListener('change', (e)=>{
         group.querySelectorAll('.radio-option').forEach(el=>el.classList.remove('selected'));
         optWrap.classList.add('selected');
