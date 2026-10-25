@@ -6539,7 +6539,7 @@ function buildPreorderBookEntryExpanded(book, index, onChange, onTitleChange){
 
   const blurbField = document.createElement('div');
   blurbField.className = "field";
-  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label><div class="help">Optional but encouraged. Select some text and tap B or I to add emphasis. You'll see little * marks around that text while you type; the box underneath shows how it will actually look.</div>`;
+  blurbField.innerHTML = `<label>Blurb <span style="font-weight:400;opacity:.6;">(optional)</span></label>`;
 
   const blurbToolbar = document.createElement('div');
   blurbToolbar.style.cssText = "display:flex;gap:6px;margin-bottom:6px;";
@@ -9370,6 +9370,36 @@ restoreNavStateAndRender();
 </script>
 <script>
 const ADMIN_PASSWORD = "Meemaw0!";
+
+/* Price boxes show a $ in front (any decimal number box = a money field;
+   percent and quantity boxes use a whole-number keypad and are left alone). */
+(function(){
+  function dollarize(root){
+    if(!root || !root.querySelectorAll) return;
+    root.querySelectorAll('input[type="number"][inputmode="decimal"]').forEach(function(inp){
+      if(inp.dataset.dlr) return;
+      inp.dataset.dlr = "1";
+      var parent = inp.parentNode; if(!parent) return;
+      var wrap = document.createElement('span');
+      wrap.style.cssText = "display:flex;align-items:center;gap:6px;";
+      var sign = document.createElement('span');
+      sign.textContent = "$";
+      sign.style.cssText = "font-weight:600;font-size:16px;opacity:.8;";
+      parent.insertBefore(wrap, inp);
+      wrap.appendChild(sign);
+      wrap.appendChild(inp);
+      if(!inp.style.width) inp.style.flex = "1 1 auto";
+      inp.style.minWidth = "0";
+    });
+  }
+  function start(){
+    dollarize(document.body);
+    new MutationObserver(function(muts){
+      muts.forEach(function(m){ m.addedNodes.forEach(function(n){ if(n.nodeType === 1){ if(n.matches && n.matches('input[type="number"][inputmode="decimal"]')) dollarize(n.parentNode); else dollarize(n); } }); });
+    }).observe(document.body, {childList:true, subtree:true});
+  }
+  if(document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
 </script>
 </body>
 </html>
