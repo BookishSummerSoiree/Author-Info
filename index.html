@@ -7593,6 +7593,10 @@ function renderPresaleOrders(){
   const esc = s => String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const money$ = n => "$" + (Math.round((n || 0) * 100) / 100).toFixed(2);
   const inSet = l => !!(l.seriesSetId && String(l.seriesSetId).trim());
+  // Same wording as the buyer's receipt: "Island Love series", "Title + swag pack".
+  const hasSwag = l => /\s\+ Swag pack$/i.test(String(l.title || ""));
+  const bareTitle = l => String(l.title || "").replace(/\s\+ Swag pack$/i, "");
+  const seriesLbl = n => { n = String(n || "").trim(); return /\bseries\b/i.test(n) ? n : (n ? n + " series" : "Series"); };
 
   // "Where your money came from": series sets vs single books, with dollars.
   function salesView(){
@@ -7605,10 +7609,12 @@ function renderPresaleOrders(){
         const sid = l.seriesSetId;
         const nm = l.seriesName || "Series";
         if(!sets[sid]) sets[sid] = nm;
-        const a = seriesAgg[nm] || (seriesAgg[nm] = { setIds:{}, dollars:0, titles:{} });
-        a.setIds[sid] = 1; a.dollars += (l.price || 0); a.titles[l.title] = 1;
+        const a = seriesAgg[nm] || (seriesAgg[nm] = { setIds:{}, swagSetIds:{}, dollars:0, titles:{} });
+        a.setIds[sid] = 1; a.dollars += (l.price || 0); a.titles[bareTitle(l)] = 1;
+        if(hasSwag(l)) a.swagSetIds[sid] = 1;
       } else {
-        const g = singles[l.title] || (singles[l.title] = { count:0, dollars:0 });
+        const key = bareTitle(l) + (hasSwag(l) ? " + swag pack" : "");
+        const g = singles[key] || (singles[key] = { count:0, dollars:0 });
         g.count++; g.dollars += (l.price || 0);
       }
     });
@@ -7630,10 +7636,12 @@ function renderPresaleOrders(){
       body.appendChild(h);
       names.forEach(nm => {
         const a = seriesAgg[nm], n = Object.keys(a.setIds).length, per = Object.keys(a.titles).length;
+        const sw = Object.keys(a.swagSetIds).length;
+        const swagNote = sw ? (sw === n ? "" : ` \u00b7 ${sw} with swag pack`) : "";
         const row = document.createElement('div');
         row.style.cssText = rowCss;
-        row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;"><span style="font-weight:600;">${esc(nm)} \u2014 Series</span><span style="font-weight:700;">${money$(a.dollars)}</span></div>`
-          + `<div style="${small}">${n} set${n===1?"":"s"} sold \u00b7 ${per} book${per===1?"":"s"} in each set</div>`;
+        row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;"><span style="font-weight:600;">${esc(seriesLbl(nm))}${sw ? " + swag pack" : ""}</span><span style="font-weight:700;">${money$(a.dollars)}</span></div>`
+          + `<div style="${small}">${n} set${n===1?"":"s"} sold \u00b7 ${per} book${per===1?"":"s"} in each set${swagNote}</div>`;
         body.appendChild(row);
       });
     }
