@@ -974,7 +974,8 @@ function sellingSectionTarget(){
   return currentData.sellingPlan === "I plan to sell books at the Soirée" ? "books-selling" : "book-signing-plan";
 }
 function preorderSectionTarget(){
-  return currentData.preorderPlan === "Yes" ? "preorder-payouts" : "preorder-plan";
+  // Always open the "how presales work" screen (the long description); authors who said Yes can continue from there.
+  return "preorder-plan";
 }
 function prizesSectionTarget(){
   return currentData.prizesPlan === "I'd love to donate some prizes!" ? "donation-knowledge" : "prizes";
