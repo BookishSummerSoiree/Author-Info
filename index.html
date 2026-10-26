@@ -2467,7 +2467,7 @@ function renderHome(){
     {label:"Continue where I left off", action: () => continueWhereLeftOff()},
     {label:"Go to a specific section in the app", action: () => { currentScreen="nav-submenu"; render(); }},
     {label:"Presale book options", action: () => { currentScreen="preorder-status"; render(); }},
-    {label:"All presale orders", action: () => { presaleOrdersState.lines = null; presaleOrdersState.error = ""; currentScreen="presale-orders"; render(); }},
+    {label:"All presale orders", action: () => { presaleOrdersState.lines = null; presaleOrdersState.statement = undefined; presaleOrdersState.error = ""; currentScreen="presale-orders"; render(); }},
     {label:"Preview my QR code sheet", action: () => { currentScreen="qr-preview"; render(); }},
     {label:"List of book(s) I said I was selling at the Soirée",
      suffix: declinedSelling ? "(you chose to not sell at the Soirée)" : null,
@@ -7527,7 +7527,7 @@ function renderPreorderStatus(){
 
 
 /* ---------- SCREEN: ALL PRESALE ORDERS ---------- */
-let presaleOrdersState = { lines: null, sort: "sales", error: "" };
+let presaleOrdersState = { lines: null, sort: "sales", error: "", statement: undefined };
 
 async function loadPresaleOrders(){
   presaleOrdersState.error = "";
@@ -7577,7 +7577,7 @@ function renderPresaleOrders(){
   const st = presaleOrdersState;
   const tabs = document.createElement('div');
   tabs.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 18px;";
-  [["sales","Sales"],["title","Title"],["order","Order"],["signed","Signed"],["personalized","Personalized"]].forEach(([id,label])=>{
+  [["sales","Sales"],["title","Title"],["order","Order"],["signed","Signed"],["personalized","Personalized"],["statement","My statement"]].forEach(([id,label])=>{
     const b = document.createElement('button');
     b.className = "btn btn-compact " + (st.sort === id ? "btn-primary" : "btn-secondary");
     b.style.padding = "9px 16px";
@@ -7662,6 +7662,66 @@ function renderPresaleOrders(){
     }
   }
 
+  // The author's own money summary: books, sales tax collected on them (not
+  // theirs), their share of Stripe's fee, and what they were paid.
+  function statementView(){
+    const S = st.statement;
+    if(S === undefined){
+      body.innerHTML = `<div class="section-sub">Loading your statement\u2026</div>`;
+      st.statement = null;
+      fetch(APPS_SCRIPT_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+        body: JSON.stringify({ action:"getAuthorStatement", authorName: currentAuthor }) })
+        .then(r => r.json()).then(j => { st.statement = (j && j.success) ? j : { error: (j && j.error) || "Could not load your statement." }; if(currentScreen === "presale-orders" && st.sort === "statement") statementView(); })
+        .catch(() => { st.statement = { error:"Could not reach the server. Check your connection and try again." }; if(currentScreen === "presale-orders" && st.sort === "statement") statementView(); });
+      return;
+    }
+    if(S === null) return;
+    if(S.error){ body.innerHTML = `<div class="section-sub" style="color:#b00020;">${esc(S.error)}</div>`; return; }
+    body.innerHTML = "";
+    const row = (a,b,bold,muted) => `<div style="display:flex;justify-content:space-between;gap:12px;${bold?"font-weight:700;":""}${muted?"font-size:12.5px;color:#6b7080;padding-left:12px;":""}"><span>${a}</span><span>${b}</span></div>`;
+    const top = document.createElement('div');
+    top.style.cssText = "background:#F7EFE1;border-radius:12px;padding:14px 16px;line-height:1.7;margin-bottom:10px;";
+    top.innerHTML = row("Book sales (before tax)", money$(S.subtotal))
+      + row("Stripe fees (your share)", "-" + money$(S.feeShare))
+      + `<div style="border-top:1px solid #E4D8C2;margin-top:6px;padding-top:6px;font-size:17px;">${row("Paid out to you", money$(S.net), true)}</div>`
+      + `<div style="${small}">${S.bookCount} book${S.bookCount===1?"":"s"} in ${S.orders.length} order${S.orders.length===1?"":"s"}.</div>`;
+    body.appendChild(top);
+    const tx = document.createElement('div');
+    tx.style.cssText = "border:1px solid rgba(12,30,61,0.15);border-radius:12px;padding:12px 16px;margin-bottom:10px;line-height:1.6;";
+    tx.innerHTML = `<div style="font-weight:700;">Sales tax: ${money$(S.tax)}</div>`
+      + `<div style="${small}margin-bottom:6px;">Buyers paid ${S.taxPct}% sales tax on your books. It is not your income. The Soir\u00e9e collects it and pays it to the State of Utah.</div>`
+      + S.taxParts.map(t => row(esc(t.name) + " " + t.pct.toFixed(2) + "%", money$(t.amount), false, true)).join("");
+    body.appendChild(tx);
+    S.orders.slice().reverse().forEach(o => {
+      const d = o.createdAt ? new Date(o.createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
+      const r = document.createElement('div');
+      r.style.cssText = rowCss;
+      r.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;"><span style="font-weight:600;">${esc(o.buyerName || "A reader")} \u00b7 ${d}</span><span style="font-weight:700;">${money$(o.subtotal)}</span></div>`
+        + `<div style="${small}">${o.books.map(b => esc(b.title)).join(", ")}</div>`
+        + `<div style="${small}">Tax on these books ${money$(o.tax)} \u00b7 fee share -${money$(o.feeShare)} \u00b7 paid to you ${money$(o.net)}</div>`;
+      body.appendChild(r);
+    });
+    const btn = document.createElement('button');
+    btn.className = "btn btn-secondary btn-block";
+    btn.style.marginTop = "16px";
+    btn.textContent = "Email me this statement";
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = "Sending\u2026";
+      try{
+        const res = await fetch(APPS_SCRIPT_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" },
+          body: JSON.stringify({ action:"emailAuthorStatement", authorName: currentAuthor }) });
+        const j = await res.json();
+        btn.textContent = (j && j.success) ? "Sent! Check your email." : ((j && j.error) || "Couldn't send. Try again.");
+      }catch(e){ btn.textContent = "Couldn't send. Try again."; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = "Email me this statement"; }, 4000);
+    };
+    body.appendChild(btn);
+    const note = document.createElement('div');
+    note.style.cssText = small + "margin-top:10px;";
+    note.textContent = "A summary for your records, not tax advice. Ask your own tax professional how to report your book income.";
+    body.appendChild(note);
+  }
+
   function checklist(kind){
     const isSigned = kind === "signed";
     const items = st.lines.filter(l => isSigned ? (l.signed && !l.personalizedName.trim()) : !!l.personalizedName.trim());
@@ -7701,6 +7761,7 @@ function renderPresaleOrders(){
       body.innerHTML = `<div class="section-sub">No presale orders yet. When someone orders one of your books, it will show up here.</div>`;
       return;
     }
+    if(st.sort === "statement") return statementView();
     if(st.sort === "sales") return salesView();
     if(st.sort === "signed") return checklist("signed");
     if(st.sort === "personalized") return checklist("personalized");
