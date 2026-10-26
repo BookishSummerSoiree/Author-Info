@@ -3088,6 +3088,13 @@ function renderLookup(kind){
       editBtn.textContent = "Edit now";
       editBtn.onclick = () => goToSection(kind === "bringing" ? "books-selling" : "donation-titles");
       card.appendChild(editBtn);
+    } else {
+      const editBtn = document.createElement('button');
+      editBtn.className = "btn btn-primary btn-compact";
+      editBtn.style.marginTop = "16px";
+      editBtn.textContent = "Edit list";
+      editBtn.onclick = () => goToSection(kind === "bringing" ? "books-selling" : "donation-titles");
+      card.appendChild(editBtn);
     }
   }
 
