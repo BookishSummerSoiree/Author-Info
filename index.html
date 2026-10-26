@@ -2048,7 +2048,6 @@ const PayoutLedger = (function(){
       const refundedG = st.groups.filter(g => g.method === "refunded");
       const tabs = [["send","To send (" + send.length + ")"],["sent","Sent (" + sentList.length + ")"],["stripe","Paid via Stripe (" + stripe.length + ")"]];
       if(issues.length) tabs.push(["issue","Needs attention (" + issues.length + ")"]);
-      if(refundedG.length) tabs.push(["refunded","Refunded (" + refundedG.length + ")"]);
       const tabRow = document.createElement("div");
       tabRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;";
       tabs.forEach(([id,label]) => tabRow.appendChild(btn(label, st.filter === id, () => { st.filter = id; paint(); })));
@@ -7671,7 +7670,7 @@ function renderPresaleOrders(){
         body.appendChild(row);
       });
     }
-    refundedSection();
+    // refunded orders are intentionally not shown
   }
 
   // The author's own money summary: books, sales tax collected on them (not
@@ -7791,7 +7790,7 @@ function renderPresaleOrders(){
       return;
     }
     if(st.lines === null){ body.innerHTML = `<div class="section-sub">Loading your orders…</div>`; return; }
-    if(!st.lines.length && !(st.refunded || []).length){
+    if(!st.lines.length){
       body.innerHTML = `<div class="section-sub">No presale orders yet. When someone orders one of your books, it will show up here.</div>`;
       return;
     }
@@ -7855,7 +7854,6 @@ function renderPresaleOrders(){
         box.innerHTML = html;
         body.appendChild(box);
       });
-      refundedSection();
     }
   }
 
