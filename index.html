@@ -702,6 +702,7 @@ const STEPS = {
       {key:"musicalTitle", label:"If you were to write a cheesy musical about your life, what would it be called?", type:"text", autoCapitalize:true, help:"This has nothing to do with whether you think you will. It's all for kicks and giggles."},
       {key:"numberGuess", label:"What's your writing-cave look?", type:"radio", options:["Pajamas","Power outfit","Something in between"]},
       {key:"heroineBook", label:"What's the weirdest thing you've ever Googled for research?", type:"text", autoCapitalize:true, help:"Feel free to elaborate, or just give the search."},
+      {key:"superpower", label:"What's your superpower?", type:"text", autoCapitalize:true},
       {key:"readingFormat", label:"Are you a plotter or a pantser?", type:"radio", options:["Plotter","Pantser","A bit of both"]},
       {key:"sportsSong", label:"If you were a sports superstar, what song would you want played when you ran out onto the field?", type:"text", autoCapitalize:true},
     ],
@@ -2616,6 +2617,7 @@ function computeChecklist(){
       {label:"Cheesy musical about your life", preview: isFieldFilled("musicalTitle") ? truncatePreview(d.musicalTitle, 40) : null, done:isFieldFilled("musicalTitle"), required:false, target:"misc-fun"},
       {label:"Writing-cave look", preview: isFieldFilled("numberGuess") ? truncatePreview(d.numberGuess, 40) : null, done:isFieldFilled("numberGuess"), required:false, target:"misc-fun"},
       {label:"Weirdest research Google", preview: isFieldFilled("heroineBook") ? truncatePreview(d.heroineBook, 40) : null, done:isFieldFilled("heroineBook"), required:false, target:"misc-fun"},
+      {label:"Superpower", preview: isFieldFilled("superpower") ? truncatePreview(d.superpower, 40) : null, done:isFieldFilled("superpower"), required:false, target:"misc-fun"},
       {label:"Plotter or pantser", preview: isFieldFilled("readingFormat") ? truncatePreview(d.readingFormat, 40) : null, done:isFieldFilled("readingFormat"), required:false, target:"misc-fun"},
       {label:"Entry song", preview: isFieldFilled("sportsSong") ? truncatePreview(d.sportsSong, 40) : null, done:isFieldFilled("sportsSong"), required:false, target:"misc-fun"},
     ]
@@ -7886,7 +7888,7 @@ function renderPresaleOrders(){
 }
 
 /* ---------- SCREEN: NOTIFICATIONS ---------- */
-const MISC_FUN_KEYS = ["whatYouWrite","funTalent","drink","booksWritten","rentFreeBook","musicalTitle","numberGuess","heroineBook","readingFormat","sportsSong"];
+const MISC_FUN_KEYS = ["whatYouWrite","funTalent","drink","booksWritten","rentFreeBook","musicalTitle","numberGuess","heroineBook","superpower","readingFormat","sportsSong"];
 const NOTIF_LINKS_KEYS = ["linkWebsite","linkInstagram","linkFacebook","linkCatalogue","linkNewsletter","linkTiktok","linkThreads","linkPodcast","linkYoutube","linkEtsy","linkBookbub","linkSpotify","linkOtherUrl"];
 
 function formatTimeDisplay(t){
