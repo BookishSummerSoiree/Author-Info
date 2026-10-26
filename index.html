@@ -228,6 +228,7 @@
   .field .help a{ color:var(--terracotta); font-weight:600; text-decoration:underline; }
   .field input[type=text],
   .field input[type=email],
+  .field input[type=tel],
   .field input[type=url],
   .field input[type=number],
   .field textarea,
@@ -667,6 +668,7 @@ const STEPS = {
     fields: [
       {key:"fullName", label:"Full name", type:"text", required:true, titleCase:true, help:"How you want your name associated with posts about you, your name tag, etc."},
       {key:"email", label:"Email address", type:"email", required:true, help:"The one you want Soirée correspondence to go to."},
+      {key:"phone", label:"Phone number", type:"tel", help:"There are some authors who are rarely on Instagram. I\u2019m wondering if a group text might be the best way to communicate Soir\u00e9e info. If you don\u2019t mind sharing your phone number, enter it. If you would prefer to keep your number private, leave this empty."},
       {key:"reminderOptIn", label:"Would you like to receive email reminders about any unfinished items on your Soirée To-Do List?", type:"radio", options:["Yes","No"]},
       {key:"reminderFrequency", label:"How often?", type:"radio", options:["Daily","Weekly"], showIf:{key:"reminderOptIn", equals:"Yes"}},
       {key:"reminderDay", label:"Which day?", type:"select", options:["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"], default:"Monday", showIf:{key:"reminderFrequency", equals:"Weekly"}},
@@ -8619,6 +8621,7 @@ function renderField(f){
     inp.dataset.key = f.key;
     inp.value = currentData[f.key] || f.default || "";
     if(f.type === "url") inp.placeholder = "https://";
+    if(f.type === "tel") inp.inputMode = "tel";
     if(f.type === "number"){
       inp.inputMode = "numeric";
       inp.pattern = "[0-9]*";
