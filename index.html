@@ -2045,14 +2045,22 @@ const PayoutLedger = (function(){
       const sentList = st.groups.filter(g => (g.method === "manual" || g.method === "issue") && g.paid);
       const stripe = st.groups.filter(g => g.method === "stripe");
       const issues = st.groups.filter(g => g.method === "issue" && !g.paid);
+      const refundedG = st.groups.filter(g => g.method === "refunded");
       const tabs = [["send","To send (" + send.length + ")"],["sent","Sent (" + sentList.length + ")"],["stripe","Paid via Stripe (" + stripe.length + ")"]];
       if(issues.length) tabs.push(["issue","Needs attention (" + issues.length + ")"]);
+      if(refundedG.length) tabs.push(["refunded","Refunded (" + refundedG.length + ")"]);
       const tabRow = document.createElement("div");
       tabRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;";
       tabs.forEach(([id,label]) => tabRow.appendChild(btn(label, st.filter === id, () => { st.filter = id; paint(); })));
       wrap.appendChild(tabRow);
 
-      let list = st.filter === "sent" ? sentList : st.filter === "stripe" ? stripe : st.filter === "issue" ? issues : send;
+      let list = st.filter === "sent" ? sentList : st.filter === "stripe" ? stripe : st.filter === "issue" ? issues : st.filter === "refunded" ? refundedG : send;
+      if(st.filter === "refunded"){
+        const n = document.createElement("div");
+        n.style.cssText = "font-size:12.5px;color:" + T.muted + ";margin-bottom:10px;";
+        n.textContent = "These orders were refunded. Nothing is owed. If a payment already went to the author, reverse that transfer in Stripe.";
+        wrap.appendChild(n);
+      }
 
       if(st.filter === "send" && send.length){
         const by = {};
@@ -2082,7 +2090,7 @@ const PayoutLedger = (function(){
         c.style.cssText = "border:1px solid " + T.border + ";border-radius:12px;padding:12px 14px;margin-bottom:10px;";
         const books = g.books.map(b => esc(b.title) + (b.signed ? " · signed" : "") + (b.personalizedName ? " · personalized to " + esc(b.personalizedName) : "") + " — " + money(b.price)).join("<br>");
         c.innerHTML =
-          '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;"><b>' + esc(g.author) + '</b><span style="color:' + T.muted + ';font-size:12.5px;">' + esc(prettyDate(g.createdAt)) + '</span></div>'
+          '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;"><b>' + esc(g.author) + (g.method === "refunded" ? ' <span style="background:#b00020;color:#fff;font-size:11px;font-weight:700;letter-spacing:.08em;padding:2px 8px;border-radius:999px;">REFUNDED</span>' : '') + '</b><span style="color:' + T.muted + ';font-size:12.5px;">' + esc(prettyDate(g.createdAt)) + '</span></div>'
           + '<div style="font-size:12.5px;color:' + T.muted + ';margin:2px 0 8px;">Ordered by ' + esc(g.buyerName || "a reader") + '</div>'
           + '<div style="font-size:13.5px;line-height:1.5;margin-bottom:8px;">' + books + '</div>'
           + '<table style="font-size:13px;border-collapse:collapse;"><tbody>'
@@ -7527,7 +7535,7 @@ function renderPreorderStatus(){
 
 
 /* ---------- SCREEN: ALL PRESALE ORDERS ---------- */
-let presaleOrdersState = { lines: null, sort: "sales", error: "", statement: undefined };
+let presaleOrdersState = { lines: null, refunded: [], sort: "sales", error: "", statement: undefined };
 
 async function loadPresaleOrders(){
   presaleOrdersState.error = "";
@@ -7538,7 +7546,7 @@ async function loadPresaleOrders(){
       body: JSON.stringify({ action: "getAuthorOrders", authorName: currentAuthor })
     });
     const json = await res.json();
-    if(json && json.success){ presaleOrdersState.lines = json.lines || []; }
+    if(json && json.success){ const all = json.lines || []; presaleOrdersState.lines = all.filter(l => !l.refunded); presaleOrdersState.refunded = all.filter(l => l.refunded); }
     else { presaleOrdersState.error = (json && json.error) || "Could not load your orders."; }
   }catch(e){
     presaleOrdersState.error = "Could not reach the server. Check your connection and try again.";
@@ -7660,6 +7668,7 @@ function renderPresaleOrders(){
         body.appendChild(row);
       });
     }
+    refundedSection();
   }
 
   // The author's own money summary: books, sales tax collected on them (not
@@ -7722,6 +7731,28 @@ function renderPresaleOrders(){
     body.appendChild(note);
   }
 
+  // Orders that were refunded: shown plainly, never counted in any total.
+  function refundedSection(){
+    const rl = st.refunded || [];
+    if(!rl.length) return;
+    const orders = {};
+    rl.forEach(l => { (orders[l.orderId] || (orders[l.orderId] = [])).push(l); });
+    const h = document.createElement('div');
+    h.style.cssText = "font-weight:700;margin:22px 0 2px;";
+    h.textContent = "Refunded (not counted above)";
+    body.appendChild(h);
+    Object.values(orders).sort((a,b) => b[0].createdAt - a[0].createdAt).forEach(ls => {
+      const d = ls[0].createdAt ? new Date(ls[0].createdAt).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
+      const sets = {}; ls.forEach(l => { if(inSet(l)) sets[l.seriesSetId] = seriesLbl(l.seriesName); });
+      const names = [...new Set(ls.filter(l => !inSet(l)).map(bareTitle).map((t,i) => t + (hasSwag(ls.filter(l => !inSet(l))[i]) ? " + swag pack" : "")).concat(Object.values(sets)))];
+      const box = document.createElement('div');
+      box.style.cssText = rowCss + "opacity:.75;";
+      box.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;"><span style="font-weight:600;">${esc(ls[0].buyerName || "A reader")}</span><span style="background:#b00020;color:#fff;font-size:11px;font-weight:700;letter-spacing:.08em;padding:3px 9px;border-radius:999px;">REFUNDED</span></div>`
+        + `<div style="${small}">${d} \u00b7 ${esc(names.join(", "))}</div>`;
+      body.appendChild(box);
+    });
+  }
+
   function checklist(kind){
     const isSigned = kind === "signed";
     const items = st.lines.filter(l => isSigned ? (l.signed && !l.personalizedName.trim()) : !!l.personalizedName.trim());
@@ -7757,7 +7788,7 @@ function renderPresaleOrders(){
       return;
     }
     if(st.lines === null){ body.innerHTML = `<div class="section-sub">Loading your orders…</div>`; return; }
-    if(!st.lines.length){
+    if(!st.lines.length && !(st.refunded || []).length){
       body.innerHTML = `<div class="section-sub">No presale orders yet. When someone orders one of your books, it will show up here.</div>`;
       return;
     }
@@ -7821,6 +7852,7 @@ function renderPresaleOrders(){
         box.innerHTML = html;
         body.appendChild(box);
       });
+      refundedSection();
     }
   }
 
