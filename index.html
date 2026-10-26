@@ -7617,9 +7617,10 @@ function renderPresaleOrders(){
         const sid = l.seriesSetId;
         const nm = l.seriesName || "Series";
         if(!sets[sid]) sets[sid] = nm;
-        const a = seriesAgg[nm] || (seriesAgg[nm] = { setIds:{}, swagSetIds:{}, dollars:0, titles:{} });
+        const a = seriesAgg[nm] || (seriesAgg[nm] = { setIds:{}, setLines:{}, setSwag:{}, dollars:0, titles:{} });
         a.setIds[sid] = 1; a.dollars += (l.price || 0); a.titles[bareTitle(l)] = 1;
-        if(hasSwag(l)) a.swagSetIds[sid] = 1;
+        a.setLines[sid] = (a.setLines[sid] || 0) + 1;
+        if(hasSwag(l)) a.setSwag[sid] = (a.setSwag[sid] || 0) + 1;
       } else {
         const key = bareTitle(l) + (hasSwag(l) ? " + swag pack" : "");
         const g = singles[key] || (singles[key] = { count:0, dollars:0 });
@@ -7644,8 +7645,10 @@ function renderPresaleOrders(){
       body.appendChild(h);
       names.forEach(nm => {
         const a = seriesAgg[nm], n = Object.keys(a.setIds).length, per = Object.keys(a.titles).length;
-        const sw = Object.keys(a.swagSetIds).length;
-        const swagNote = sw ? (sw === n ? "" : ` \u00b7 ${sw} with swag pack`) : "";
+        const anyIds = Object.keys(a.setSwag);
+        const fullIds = anyIds.filter(id => a.setSwag[id] === a.setLines[id]);
+        const sw = (fullIds.length === n) ? n : 0;   // headline only when every set had swag on every book
+        const swagNote = (!sw && anyIds.length) ? ` \u00b7 ${anyIds.length} set${anyIds.length===1?"":"s"} with some swag packs` : "";
         const row = document.createElement('div');
         row.style.cssText = rowCss;
         row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;"><span style="font-weight:600;">${esc(seriesLbl(nm))}${sw ? " + swag pack" : ""}</span><span style="font-weight:700;">${money$(a.dollars)}</span></div>`
