@@ -3180,11 +3180,20 @@ function renderGraphics(){
   downloadZipBtn.style.padding = "8px 18px";
   downloadZipBtn.style.fontSize = "12.5px";
   downloadZipBtn.textContent = graphicsSelected.size
-    ? `Download ${graphicsSelected.size} selected as ZIP`
+    ? (graphicsSelected.size === 1 ? "Download this graphic" : `Download ${graphicsSelected.size} selected as ZIP`)
     : "Select graphics to download";
   downloadZipBtn.disabled = graphicsSelected.size === 0;
   downloadZipBtn.style.opacity = graphicsSelected.size === 0 ? "0.5" : "1";
   downloadZipBtn.onclick = async () => {
+    if(graphicsSelected.size === 1){
+      // Just one picture: download the file itself (no ZIP, easier on phones).
+      const g = GRAPHICS[[...graphicsSelected][0]];
+      const a = document.createElement('a');
+      a.href = g.src; a.download = g.file;
+      document.body.appendChild(a); a.click(); a.remove();
+      showToast("Downloading!");
+      return;
+    }
     downloadZipBtn.textContent = "Zipping…";
     const zip = new JSZip();
     try{
