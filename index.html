@@ -773,24 +773,29 @@ const STEPS = {
 
   "preorder-plan": {
     title: "Presale Books for the Soirée", icon: FLOURISH.bookStack,
-    sub: "Preselling books at the Soirée got a major glow-up! It's never been easier for attendees to preorder books.<br><br>" +
+    sub: "Preselling books at the Soirée got a major glow-up! It's never been easier for attendees to preorder.<br><br>" +
       "<strong>How it works for attendees:</strong><br>" +
-      "All the books in one place — one cart, one transaction, no bouncing between each author's own form.<br>" +
-      "They can sort by title, author, price, Soirée pricing (any book an author has given a slight discount for the Soirée), series, or format (paperback, hardcover, special edition, box set).<br>" +
+      "All the books in one place: one cart, one transaction, no bouncing between each author's form.<br>" +
+      "They can sort by title, author, price, Soirée pricing (a slight discount an author might give for the Soirée), series, or format (paperback, hardcover, special edition, box set).<br>" +
       "They can also choose whether they want a book signed and/or personalized, right when they add it to their cart.<br><br>" +
       "<strong>How it works for authors:</strong><br>" +
-      "You enter your book info — title, cover, blurb, price, formats — and the site does the rest. You sit back and write your next bestseller.<br>" +
-      "The hope is that attendees who came in for someone else's books see yours mixed in and end up buying from you too — books they might never have gone looking for on their own.<br>" +
-      "Knowing ahead of time who wants a copy (and whether it should be signed or personalized) also means you can bring exactly what you need, instead of guessing.<br><br>" +
+      "You enter your book info (title, cover, blurb, price, formats) and the site does the rest. You sit back and write your next bestseller.<br>" +
+      "<div class=\"info-box\" style=\"margin:12px 0;\"><div style=\"font-family:inherit;font-size:inherit;line-height:1.5;\">" +
+      "<div style=\"font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:12px;color:var(--terracotta);margin-bottom:6px;\">Swag Packs</div>" +
+      "<div>You have the option to sell a little Swag pack with each book. <em>You set the price. You set what is in the pack. Readers get the goodies.</em></div>" +
+      "<div style=\"margin-top:.6em;\">Customers will see: \"This book has a Swag Pack available for $X <em style=\"font-size:.9em;\">(swag packs are different for each book and determined by the author. It might include: stickers, bookmarks, magnets, and/or other items. If you\u2019d like more specific information, please contact the author)</em>\" Then you include the swag you want for that book.</div>" +
+      "</div></div>" +
+      "The hope is that attendees who came for someone else's books see yours mixed in and end up buying from you too.<br><br>" +
+      "Knowing ahead of time who wants a copy, and whether it should be signed or personalized, also means you can bring exactly what you need instead of guessing.<br><br>" +
       "<strong>How you get notified and paid:</strong><br>" +
-      "You'll get an email for every order that includes: name of person who ordered, the book(s) purchased, price paid, whether it should be signed, and any personalization.<br><br>" +
-      "Payment comes in one of two options:" +
+      "You'll get an email for every order with the buyer's name, the book(s), the price paid, whether it should be signed, and any personalization.<br><br>" +
+      "Payment comes in one of two ways:" +
       "<ul style=\"margin:8px 0 14px 22px;padding:0;\">" +
-      "<li style=\"margin-bottom:8px;\"><strong>Stripe:</strong> Payment immediately into your Stripe account (easy to set up if you don't have one). Then you decide in your own Stripe dashboard whether payouts happen daily, weekly, or monthly.</li>" +
-      "<li><strong>Venmo:</strong> The money would be put in the Soirée Stripe account. Those funds would be deposited in the Soirée bank account weekly, and Nicole would send you a Venmo within about two weeks. It's slower and a little more labor intensive, but it works.</li>" +
+      "<li style=\"margin-bottom:8px;\"><strong>Stripe:</strong> Payment goes straight into your Stripe account (easy to set up if you don't have one). You choose daily, weekly, or monthly payouts in your Stripe dashboard.</li>" +
+      "<li><strong>Venmo:</strong> The money goes into the Soirée Stripe account and is deposited in the Soirée bank account weekly. Nicole sends you a Venmo within about two weeks. It's slower and a little more labor intensive, but it works.</li>" +
       "</ul>" +
       "<strong>Stripe fees:</strong><br>" +
-      "No matter how you prefer to be paid, Stripe is the one processing the order, so their fees still apply. Their standard processing fee (2.9% + 30&cent; per transaction) comes out of your payout, same as it would with any other card-processing service — Soirée doesn't add anything on top of that.<br><br>" +
+      "No matter how you're paid, Stripe processes every order, so their standard fee (2.9% + 30&cent; per transaction) comes out of your payout, the same as any card processor. Soirée doesn't add anything on top.<br><br>" +
       "Will you have any books available for presale before the Soirée?",
     fields: [
       {key:"preorderPlan", label:"", type:"radio", required:true, options:[
@@ -4932,8 +4937,6 @@ function renderPreorderBooks(step){
     <div class="eyebrow">Bookish Summer Soirée</div>
     <h1 class="section-title">${titleImg}${step.title}</h1>
     <div class="help" style="margin-top:10px;line-height:1.5;">
-      <strong>Swag Packs:</strong> You have the option to sell a little Swag pack with each book. <em>You set the price. You set what is in the pack. Readers get the goodies.</em><span style="display:block;height:.6em;"></span>
-      Customers will see: "This book has a Swag Pack available for $X <em style="font-size:.9em;">(swag packs are different for each book and determined by the author. Things they might include: stickers, bookmarks, magnets, and/or other items. If you\u2019d like more specific information, please contact the author)</em>" Then you include the swag you want for that book.<br><br>
       If you have an unpublished book that will be available by the Soirée, be sure to include it, and mark it <em>new</em>.
     </div>
     <div class="section-sub" style="margin-top:14px;">${step.sub || ""}</div>
