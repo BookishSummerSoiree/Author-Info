@@ -1314,8 +1314,9 @@ function reportProgressToHQ(author, data){
       swag:   currentData.swagPlan   === "I'll pass on adding swag to the totes." ? "no" : "yes",
       at: Date.now()
     };
-    fetch(HQ_FIREBASE_URL + "/authorProgress/" + slug + ".json", {
-      method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+    fetch(APPS_SCRIPT_URL, {
+      method: "POST", headers: {"Content-Type": "text/plain;charset=utf-8"},
+      body: JSON.stringify({action:"fbRelay", path:"authorProgress/" + slug, method:"PUT", body})
     }).catch(()=>{});
   }catch(e){}
 }
@@ -1438,11 +1439,14 @@ function desiredDonatedPrizes_(data){
 }
 
 async function _fbReq(path, method, body){
-  const res = await fetch(HQ_FIREBASE_URL + "/" + path + ".json", {
-    method, headers:{"Content-Type":"application/json"}, body: body === undefined ? undefined : JSON.stringify(body)
+  // Goes through the Google script (which holds the database sign-in) instead of straight to Firebase.
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body: JSON.stringify({action:"fbRelay", path, method, body})
   });
-  if(!res.ok) throw new Error("Firebase " + method + " " + path + " " + res.status);
-  return method === "GET" ? res.json() : null;
+  const json = await res.json();
+  if(!json || !json.success) throw new Error("Firebase " + method + " " + path + " " + (json && json.status ? json.status : "failed"));
+  return method === "GET" ? json.data : null;
 }
 
 function _prizeRecordFor(id, d, author, slug, data, now){
