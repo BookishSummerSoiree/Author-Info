@@ -3180,41 +3180,23 @@ function renderGraphics(){
   downloadZipBtn.style.padding = "8px 18px";
   downloadZipBtn.style.fontSize = "12.5px";
   downloadZipBtn.textContent = graphicsSelected.size
-    ? (graphicsSelected.size === 1 ? "Download this graphic" : `Download ${graphicsSelected.size} selected as ZIP`)
+    ? (graphicsSelected.size === 1 ? "Download this graphic" : `Download ${graphicsSelected.size} selected`)
     : "Select graphics to download";
   downloadZipBtn.disabled = graphicsSelected.size === 0;
   downloadZipBtn.style.opacity = graphicsSelected.size === 0 ? "0.5" : "1";
   downloadZipBtn.onclick = async () => {
-    if(graphicsSelected.size === 1){
-      // Just one picture: download the file itself (no ZIP, easier on phones).
-      const g = GRAPHICS[[...graphicsSelected][0]];
+    // One file after another (no ZIP, easier on phones). A short pause between
+    // files keeps phones from skipping any.
+    const picks = [...graphicsSelected].map(i => GRAPHICS[i]);
+    for(let n = 0; n < picks.length; n++){
+      const g = picks[n];
+      downloadZipBtn.textContent = picks.length > 1 ? `Downloading ${n+1} of ${picks.length}…` : "Downloading…";
       const a = document.createElement('a');
       a.href = g.src; a.download = g.file;
       document.body.appendChild(a); a.click(); a.remove();
-      showToast("Downloading!");
-      return;
+      await new Promise(r => setTimeout(r, 700));
     }
-    downloadZipBtn.textContent = "Zipping…";
-    const zip = new JSZip();
-    try{
-      for(const i of graphicsSelected){
-        const g = GRAPHICS[i];
-        const res = await fetch(g.src);
-        if(!res.ok) throw new Error("fetch " + g.file);
-        zip.file(g.file, await res.blob());
-      }
-    }catch(e){
-      showToast("Couldn't load a graphic. Check your connection and try again.");
-      downloadZipBtn.textContent = "Download " + graphicsSelected.size + " selected as ZIP";
-      return;
-    }
-    const blob = await zip.generateAsync({type:"blob"});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = "Bookish-Summer-Soiree-Graphics.zip";
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    showToast("Downloading ZIP!");
+    showToast(picks.length > 1 ? "Downloaded " + picks.length + " graphics!" : "Downloading!");
     render();
   };
   toolbar.appendChild(downloadZipBtn);
