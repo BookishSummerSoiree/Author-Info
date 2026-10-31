@@ -1654,12 +1654,17 @@ const RESTORABLE_SCREENS = new Set([
 function saveNavState(){
   try{
     if(currentAuthor && RESTORABLE_SCREENS.has(currentScreen)){
-      sessionStorage.setItem("bss2027:navstate", JSON.stringify({
+      const navJson = JSON.stringify({
         author: currentAuthor, screen: currentScreen, stepId: currentStepId,
-        cameFromWhatsLeft, cameFromNavSubmenu
-      }));
+        cameFromWhatsLeft, cameFromNavSubmenu, at: Date.now()
+      });
+      sessionStorage.setItem("bss2027:navstate", navJson);
+      // Phones throw a page away after it sits in the background a while, and that clears
+      // sessionStorage. This longer-lived copy puts you back where you were.
+      try{ localStorage.setItem("bss2027:navstate", navJson); }catch(e){}
     } else {
       sessionStorage.removeItem("bss2027:navstate");
+      try{ localStorage.removeItem("bss2027:navstate"); }catch(e){}
     }
   }catch(e){ /* private browsing / storage disabled — ignore */ }
 }
@@ -9468,6 +9473,12 @@ async function restoreNavStateAndRender(){
   try{
     const raw = sessionStorage.getItem("bss2027:navstate");
     if(raw) saved = JSON.parse(raw);
+    if(!saved){
+      // Page was discarded and reloaded: use the longer-lived copy if it's from the last 24 hours.
+      const raw2 = localStorage.getItem("bss2027:navstate");
+      const s2 = raw2 ? JSON.parse(raw2) : null;
+      if(s2 && s2.at && Date.now() - s2.at < 24*3600*1000) saved = s2;
+    }
   }catch(e){ saved = null; }
 
   const canRestore = saved && saved.author && RESTORABLE_SCREENS.has(saved.screen)
