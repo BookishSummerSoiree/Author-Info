@@ -11,9 +11,9 @@
 <meta name="apple-mobile-web-app-title" content="Soirée: Authors">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#F7EFE1">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Alex+Brush&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Montserrat:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
 
@@ -1143,7 +1143,7 @@ function pushToSheet(action, payload){
    Claude's own preview and can't be relied on there). We still write to
    window.storage too, purely as a same-session speed cache / offline
    fallback if the network request fails. */
-async function loadAuthorData(author){
+async function loadAuthorData(author, strict){
   try{
     const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
@@ -1163,7 +1163,8 @@ async function loadAuthorData(author){
     if(json && json.success && json.exists === false){
       return freshData();
     }
-  }catch(e){ /* server unreachable — fall back to local cache below */ }
+  }catch(e){ if(strict) throw e; /* server unreachable — fall back to local cache below */ }
+  if(strict) throw new Error("no data");
 
   const cached = await localCache.get(storageKey(author), true);
   const data = cached ? JSON.parse(cached.value) : freshData();
@@ -1662,7 +1663,7 @@ function saveNavState(){
       // Phones throw a page away after it sits in the background a while, and that clears
       // sessionStorage. This longer-lived copy puts you back where you were.
       try{ localStorage.setItem("bss2027:navstate", navJson); }catch(e){}
-    } else {
+    } else if(currentScreen === "author-select"){
       sessionStorage.removeItem("bss2027:navstate");
       try{ localStorage.removeItem("bss2027:navstate"); }catch(e){}
     }
@@ -9489,7 +9490,12 @@ async function restoreNavStateAndRender(){
   currentAuthor = saved.author;
   currentScreen = "loading";
   render();
-  currentData = await loadAuthorData(saved.author);
+  let got = null;
+  for(let i=0;i<4 && !got;i++){
+    try{ got = await loadAuthorData(saved.author, true); }catch(e){ await new Promise(r=>setTimeout(r, 1500*(i+1))); }
+  }
+  if(!got){ currentScreen = "home"; currentData = await loadAuthorData(saved.author); render(); return; }
+  currentData = got;
   currentScreen = saved.screen;
   currentStepId = saved.stepId || null;
   cameFromWhatsLeft = !!saved.cameFromWhatsLeft;
