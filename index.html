@@ -705,6 +705,7 @@ const STEPS = {
       {key:"superpower", label:"What's your superpower?", type:"text", autoCapitalize:true},
       {key:"readingFormat", label:"Are you a plotter or a pantser?", type:"radio", options:["Plotter","Pantser","A bit of both"]},
       {key:"sportsSong", label:"If you were a sports superstar, what song would you want played when you ran out onto the field?", type:"text", autoCapitalize:true},
+      {key:"vampirePenName", label:"If you wrote Vampire romance books under a pen name, what would your pen name be?", type:"text", autoCapitalize:true},
       {key:"funPhoto", label:"Fun photo (optional)", type:"file", helpHtml:"Your Soir\u00e9e author announcement is two slides, styled like sports trading cards. Slide one has your headshot and some of your fun answers. Slide two is a \u201cstats sheet\u201d with the rest of your answers and a smaller headshot.<br><br>Want something other than your headshot? Upload it here. Funny, sporty, travel, anything goes! If you skip this, we\u2019ll use your headshot on both slides, which is <em>100% fine!</em>"},
     ],
     next: () => "links"
@@ -2626,6 +2627,7 @@ function computeChecklist(){
       {label:"Weirdest research Google", preview: isFieldFilled("heroineBook") ? truncatePreview(d.heroineBook, 40) : null, done:isFieldFilled("heroineBook"), required:false, target:"misc-fun"},
       {label:"Superpower", preview: isFieldFilled("superpower") ? truncatePreview(d.superpower, 40) : null, done:isFieldFilled("superpower"), required:false, target:"misc-fun"},
       {label:"Plotter or pantser", preview: isFieldFilled("readingFormat") ? truncatePreview(d.readingFormat, 40) : null, done:isFieldFilled("readingFormat"), required:false, target:"misc-fun"},
+      {label:"Vampire pen name", preview: isFieldFilled("vampirePenName") ? truncatePreview(d.vampirePenName, 40) : null, done:isFieldFilled("vampirePenName"), required:false, target:"misc-fun"},
       {label:"Entry song", preview: isFieldFilled("sportsSong") ? truncatePreview(d.sportsSong, 40) : null, done:isFieldFilled("sportsSong"), required:false, target:"misc-fun"},
       {label:"Fun photo (optional)", done:isFieldFilled("funPhoto","file"), required:false, target:"misc-fun"},
     ]
@@ -6707,7 +6709,13 @@ function buildBookCoverUpload(book){
   const inp = document.createElement('input');
   inp.type = "file";
   inp.accept = "image/png,image/jpeg,image/webp";
-  inp.style.cssText = "font-family:'Montserrat',sans-serif;font-size:13px;";
+  inp.style.cssText = "font-family:'Montserrat',sans-serif;font-size:14px;max-width:100%;";
+  if(!document.getElementById("fileBtnStyle")){
+    const st = document.createElement('style'); st.id = "fileBtnStyle";
+    st.textContent = ".file-big::file-selector-button{font-family:'Montserrat',sans-serif;font-size:16px;font-weight:600;padding:14px 22px;margin-right:12px;border:none;border-radius:12px;background:#E4593F;color:#fff;cursor:pointer}";
+    document.head.appendChild(st);
+  }
+  inp.className = "file-big";
   attachFocusOpensFilePicker(inp);
 
   inp.addEventListener('change', async ()=>{
@@ -7887,7 +7895,7 @@ function renderPresaleOrders(){
 }
 
 /* ---------- SCREEN: NOTIFICATIONS ---------- */
-const MISC_FUN_KEYS = ["whatYouWrite","funTalent","drink","booksWritten","rentFreeBook","musicalTitle","numberGuess","heroineBook","superpower","readingFormat","sportsSong"];
+const MISC_FUN_KEYS = ["whatYouWrite","funTalent","drink","booksWritten","rentFreeBook","musicalTitle","numberGuess","heroineBook","superpower","readingFormat","sportsSong","vampirePenName"];
 const NOTIF_LINKS_KEYS = ["linkWebsite","linkInstagram","linkFacebook","linkCatalogue","linkNewsletter","linkTiktok","linkThreads","linkPodcast","linkYoutube","linkEtsy","linkBookbub","linkSpotify","linkOtherUrl"];
 
 function formatTimeDisplay(t){
