@@ -705,6 +705,7 @@ const STEPS = {
       {key:"superpower", label:"What's your superpower?", type:"text", autoCapitalize:true},
       {key:"readingFormat", label:"Are you a plotter or a pantser?", type:"radio", options:["Plotter","Pantser","A bit of both"]},
       {key:"sportsSong", label:"If you were a sports superstar, what song would you want played when you ran out onto the field?", type:"text", autoCapitalize:true},
+      {key:"funPhoto", label:"Fun photo (optional)", type:"file", helpHtml:"The post announcing you as a Soir\u00e9e author will have two slides: First with your headshot and some of the fun answers you added here, and in the style of a sports trading card. The second will be a \u201cStats sheet\u201d and use the remaining answers from this sheet. It will also have a smaller version of your headshot.<br><br>If you <em>want</em> to have anything other than your headshot, you can upload it here. It can be fun, silly, sporty (fitting with the <em>trading card</em> vibe), traveling, or anything else you might want. Otherwise we will use your headshot on both slides\u2014<em>which would be 100% fine!</em>"},
     ],
     next: () => "links"
   },
@@ -2625,6 +2626,7 @@ function computeChecklist(){
       {label:"Superpower", preview: isFieldFilled("superpower") ? truncatePreview(d.superpower, 40) : null, done:isFieldFilled("superpower"), required:false, target:"misc-fun"},
       {label:"Plotter or pantser", preview: isFieldFilled("readingFormat") ? truncatePreview(d.readingFormat, 40) : null, done:isFieldFilled("readingFormat"), required:false, target:"misc-fun"},
       {label:"Entry song", preview: isFieldFilled("sportsSong") ? truncatePreview(d.sportsSong, 40) : null, done:isFieldFilled("sportsSong"), required:false, target:"misc-fun"},
+      {label:"Fun photo (optional)", done:isFieldFilled("funPhoto","file"), required:false, target:"misc-fun"},
     ]
   });
 
